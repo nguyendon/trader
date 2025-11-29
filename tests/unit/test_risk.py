@@ -147,9 +147,7 @@ class TestRiskManager:
         assert result.approved is False
         assert "Daily loss limit" in result.reason
 
-    def test_sell_signal_approved_with_position(
-        self, manager: RiskManager
-    ) -> None:
+    def test_sell_signal_approved_with_position(self, manager: RiskManager) -> None:
         """Test sell signal approval with existing position."""
         signal = Signal(action=SignalAction.SELL, symbol="AAPL")
         position = Position(

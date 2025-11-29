@@ -28,10 +28,14 @@ class TestSMACrossover:
 
     def test_init_invalid_periods_raises(self) -> None:
         """Test that invalid periods raise errors."""
-        with pytest.raises(ValueError, match="fast_period must be less than slow_period"):
+        with pytest.raises(
+            ValueError, match="fast_period must be less than slow_period"
+        ):
             SMACrossover(fast_period=20, slow_period=10)
 
-        with pytest.raises(ValueError, match="fast_period must be less than slow_period"):
+        with pytest.raises(
+            ValueError, match="fast_period must be less than slow_period"
+        ):
             SMACrossover(fast_period=10, slow_period=10)
 
     def test_init_non_positive_periods_raises(self) -> None:
@@ -185,9 +189,7 @@ class TestBaseStrategyHelpers:
     def test_buy_signal(self) -> None:
         """Test buy signal creation."""
         strategy = SMACrossover()
-        signal = strategy.buy_signal(
-            "AAPL", "Test buy", confidence=0.8, quantity=100
-        )
+        signal = strategy.buy_signal("AAPL", "Test buy", confidence=0.8, quantity=100)
 
         assert signal.action == SignalAction.BUY
         assert signal.symbol == "AAPL"

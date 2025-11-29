@@ -151,8 +151,7 @@ class PaperBroker(BaseBroker):
             order.updated_at = datetime.utcnow()
 
             logger.info(
-                f"BUY {order.quantity} {order.symbol} @ ${price} "
-                f"(cash: ${self._cash})"
+                f"BUY {order.quantity} {order.symbol} @ ${price} (cash: ${self._cash})"
             )
 
         else:  # SELL
@@ -177,16 +176,13 @@ class PaperBroker(BaseBroker):
             order.updated_at = datetime.utcnow()
 
             logger.info(
-                f"SELL {order.quantity} {order.symbol} @ ${price} "
-                f"(cash: ${self._cash})"
+                f"SELL {order.quantity} {order.symbol} @ ${price} (cash: ${self._cash})"
             )
 
         self._orders[order.order_id] = order
         return order
 
-    def _add_to_position(
-        self, symbol: str, quantity: int, price: Decimal
-    ) -> None:
+    def _add_to_position(self, symbol: str, quantity: int, price: Decimal) -> None:
         """Add shares to a position."""
         if symbol in self._positions:
             pos = self._positions[symbol]

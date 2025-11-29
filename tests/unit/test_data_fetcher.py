@@ -57,9 +57,7 @@ class TestMockDataFetcher:
         assert len(bars) == 5
 
     @pytest.mark.asyncio
-    async def test_fetch_bars_symbol_correct(
-        self, fetcher: MockDataFetcher
-    ) -> None:
+    async def test_fetch_bars_symbol_correct(self, fetcher: MockDataFetcher) -> None:
         """Test that symbol is set correctly on bars."""
         bars = await fetcher.fetch_bars(
             symbol="AAPL",
@@ -72,9 +70,7 @@ class TestMockDataFetcher:
             assert bar.symbol == "AAPL"
 
     @pytest.mark.asyncio
-    async def test_fetch_bars_timeframe_correct(
-        self, fetcher: MockDataFetcher
-    ) -> None:
+    async def test_fetch_bars_timeframe_correct(self, fetcher: MockDataFetcher) -> None:
         """Test that timeframe is set correctly."""
         bars = await fetcher.fetch_bars(
             symbol="TEST",

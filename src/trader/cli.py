@@ -159,9 +159,7 @@ def _print_results(result: BacktestResult) -> None:
     # Trade list if any
     if result.trades:
         console.print("\n")
-        trades_table = Table(
-            title="Trades", show_header=True, header_style="bold cyan"
-        )
+        trades_table = Table(title="Trades", show_header=True, header_style="bold cyan")
         trades_table.add_column("#", style="dim")
         trades_table.add_column("Entry Date")
         trades_table.add_column("Exit Date")
@@ -211,7 +209,9 @@ def paper(
     fast_period: int = typer.Option(10, "--fast", "-f", help="Fast SMA period"),
     slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA period"),
     capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
-    interval: int = typer.Option(60, "--interval", "-i", help="Check interval in seconds"),
+    interval: int = typer.Option(
+        60, "--interval", "-i", help="Check interval in seconds"
+    ),
     day_trade: bool = typer.Option(False, "--day-trade", help="Close positions at EOD"),
 ) -> None:
     """Run paper trading with mock data (no API key needed)."""
@@ -293,11 +293,12 @@ async def _run_paper_trading(
 
         # Simulate a few trading cycles
         for i in range(3):
-            console.print(f"\n[bold]--- Cycle {i+1} ---[/bold]")
+            console.print(f"\n[bold]--- Cycle {i + 1} ---[/bold]")
 
             for symbol in symbols:
                 # Update price with some movement
                 import random
+
                 current = float(await broker.get_latest_price(symbol))
                 new_price = current * (1 + random.uniform(-0.02, 0.02))
                 broker.set_price(symbol, new_price)

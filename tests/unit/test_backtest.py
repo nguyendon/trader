@@ -290,9 +290,7 @@ class TestBacktestEngine:
 
         strategy = SMACrossover(fast_period=5, slow_period=10)
 
-        result_with = await engine_with_commission.run(
-            strategy, crossover_data, "TEST"
-        )
+        result_with = await engine_with_commission.run(strategy, crossover_data, "TEST")
         result_without = await engine_no_commission.run(
             strategy, crossover_data, "TEST"
         )
@@ -307,9 +305,7 @@ class TestBacktestEngine:
             assert capital_diff == pytest.approx(expected_commission, rel=0.1)
 
     @pytest.mark.asyncio
-    async def test_position_size_respected(
-        self, crossover_data: pd.DataFrame
-    ) -> None:
+    async def test_position_size_respected(self, crossover_data: pd.DataFrame) -> None:
         """Test that position size percentage is respected."""
         engine_full = BacktestEngine(
             initial_capital=100_000.0,

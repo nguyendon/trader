@@ -116,7 +116,7 @@ class BacktestResult:
         if len(returns) == 0 or returns.std() == 0:
             return 0.0
 
-        return float(returns.mean() / returns.std() * (252 ** 0.5))
+        return float(returns.mean() / returns.std() * (252**0.5))
 
     def summary(self) -> dict:
         """Get summary statistics as dictionary."""
@@ -144,7 +144,9 @@ class BacktestResult:
         print(f"Backtest Results: {summary['strategy']}")
         print("=" * 50)
         print(f"Symbol:           {summary['symbol']}")
-        print(f"Period:           {summary['start_date'][:10]} to {summary['end_date'][:10]}")
+        print(
+            f"Period:           {summary['start_date'][:10]} to {summary['end_date'][:10]}"
+        )
         print("-" * 50)
         print(f"Initial Capital:  ${summary['initial_capital']:,.2f}")
         print(f"Final Capital:    ${summary['final_capital']:,.2f}")
@@ -223,10 +225,7 @@ class BacktestEngine:
         if len(data) == 0:
             raise ValueError("Data cannot be empty")
 
-        logger.info(
-            f"Running backtest: {strategy.name} on {symbol} "
-            f"({len(data)} bars)"
-        )
+        logger.info(f"Running backtest: {strategy.name} on {symbol} ({len(data)} bars)")
 
         # Calculate indicators once
         data = strategy.calculate_indicators(data)
@@ -298,8 +297,7 @@ class BacktestEngine:
                     entry_reason = signal.reason
 
                     logger.debug(
-                        f"BUY {quantity} {symbol} @ {close_price} "
-                        f"(capital: {capital})"
+                        f"BUY {quantity} {symbol} @ {close_price} (capital: {capital})"
                     )
 
             elif signal.action == SignalAction.SELL and position is not None:

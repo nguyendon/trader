@@ -118,7 +118,9 @@ class RiskManager:
 
         # Check daily loss limit
         if daily_pnl is not None:
-            daily_loss_pct = float(-daily_pnl / portfolio_value) if portfolio_value > 0 else 0
+            daily_loss_pct = (
+                float(-daily_pnl / portfolio_value) if portfolio_value > 0 else 0
+            )
             if daily_loss_pct >= self.config.max_daily_loss_pct:
                 return RiskCheckResult(
                     approved=False,
@@ -192,7 +194,9 @@ class RiskManager:
             stop_loss = current_price * (1 - Decimal(str(self.config.stop_loss_pct)))
 
         if self.config.take_profit_pct:
-            take_profit = current_price * (1 + Decimal(str(self.config.take_profit_pct)))
+            take_profit = current_price * (
+                1 + Decimal(str(self.config.take_profit_pct))
+            )
 
         # Use signal's stop/take if provided
         if signal.stop_loss is not None:
@@ -261,7 +265,9 @@ class RiskManager:
             return 0
 
         # Calculate max position value based on percentage
-        max_value_pct = portfolio_value * Decimal(str(self.config.max_position_size_pct))
+        max_value_pct = portfolio_value * Decimal(
+            str(self.config.max_position_size_pct)
+        )
 
         # Apply absolute max if set
         if self.config.max_position_value is not None:

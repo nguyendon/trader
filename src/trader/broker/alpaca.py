@@ -262,11 +262,15 @@ class AlpacaBroker(BaseBroker):
             symbol=ao.symbol,
             side=OrderSide.BUY if ao.side.value == "buy" else OrderSide.SELL,
             quantity=int(ao.qty),
-            order_type=OrderType.MARKET if ao.type.value == "market" else OrderType.LIMIT,
+            order_type=OrderType.MARKET
+            if ao.type.value == "market"
+            else OrderType.LIMIT,
             limit_price=Decimal(str(ao.limit_price)) if ao.limit_price else None,
             status=self._map_status(ao.status.value),
             order_id=str(ao.client_order_id or ao.id),
             broker_order_id=str(ao.id),
             filled_quantity=int(ao.filled_qty or 0),
-            filled_avg_price=Decimal(str(ao.filled_avg_price)) if ao.filled_avg_price else None,
+            filled_avg_price=Decimal(str(ao.filled_avg_price))
+            if ao.filled_avg_price
+            else None,
         )

@@ -199,12 +199,22 @@ class TestPaperBroker:
 
         # Buy AAPL
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.BUY, quantity=50, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=50,
+                order_type=OrderType.MARKET,
+            )
         )
 
         # Buy MSFT
         await broker.submit_order(
-            Order(symbol="MSFT", side=OrderSide.BUY, quantity=30, order_type=OrderType.MARKET)
+            Order(
+                symbol="MSFT",
+                side=OrderSide.BUY,
+                quantity=30,
+                order_type=OrderType.MARKET,
+            )
         )
 
         positions = await broker.get_positions()
@@ -221,13 +231,23 @@ class TestPaperBroker:
 
         # Buy 100 at $100
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.BUY, quantity=100, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_type=OrderType.MARKET,
+            )
         )
 
         # Price goes up, buy more
         broker.set_price("AAPL", 120.0)
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.BUY, quantity=100, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_type=OrderType.MARKET,
+            )
         )
 
         position = await broker.get_position("AAPL")
@@ -244,12 +264,22 @@ class TestPaperBroker:
 
         # Buy 100 shares
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.BUY, quantity=100, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_type=OrderType.MARKET,
+            )
         )
 
         # Sell 50
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.SELL, quantity=50, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.SELL,
+                quantity=50,
+                order_type=OrderType.MARKET,
+            )
         )
 
         position = await broker.get_position("AAPL")
@@ -271,7 +301,12 @@ class TestPaperBroker:
         broker.set_price("AAPL", 100.0)
 
         await broker.submit_order(
-            Order(symbol="AAPL", side=OrderSide.BUY, quantity=100, order_type=OrderType.MARKET)
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_type=OrderType.MARKET,
+            )
         )
 
         broker.reset()

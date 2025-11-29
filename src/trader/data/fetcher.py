@@ -72,9 +72,7 @@ class BaseDataFetcher(ABC):
         bars = await self.fetch_bars(symbol, timeframe, start, end, limit)
 
         if not bars:
-            return pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume"]
-            )
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
         data = {
             "open": [float(bar.open) for bar in bars],
@@ -241,9 +239,7 @@ class MockDataFetcher(BaseDataFetcher):
             return []
 
         # Generate prices using geometric Brownian motion
-        returns = self.rng.normal(
-            self.drift, self.volatility, num_bars
-        )
+        returns = self.rng.normal(self.drift, self.volatility, num_bars)
         prices = self.base_price * np.exp(np.cumsum(returns))
 
         bars = []
@@ -310,6 +306,7 @@ def get_data_fetcher(settings: Settings | None = None) -> BaseDataFetcher:
     """
     if settings is None:
         from trader.config.settings import get_settings
+
         settings = get_settings()
 
     if settings.has_alpaca_credentials:

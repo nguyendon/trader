@@ -262,9 +262,7 @@ class LiveTradingEngine:
             signal=signal,
         )
 
-        logger.info(
-            f"Executing {side.value} {quantity} {symbol}: {signal.reason}"
-        )
+        logger.info(f"Executing {side.value} {quantity} {symbol}: {signal.reason}")
 
         result = await self.broker.submit_order(order)
         self.risk_manager.record_trade()
