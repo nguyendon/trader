@@ -14,6 +14,9 @@ from loguru import logger
 from trader.core.models import Bar, TimeFrame
 
 if TYPE_CHECKING:
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.timeframe import TimeFrame as AlpacaTimeFrame
+
     from trader.config.settings import Settings
 
 
@@ -101,10 +104,10 @@ class AlpacaDataFetcher(BaseDataFetcher):
         self.api_key = api_key
         self.secret_key = secret_key
         self.paper = paper
-        self._client: "StockHistoricalDataClient | None" = None
+        self._client: StockHistoricalDataClient | None = None
 
     @property
-    def client(self) -> "StockHistoricalDataClient":
+    def client(self) -> StockHistoricalDataClient:
         """Lazy-initialize the Alpaca client."""
         if self._client is None:
             from alpaca.data.historical import StockHistoricalDataClient
@@ -115,7 +118,7 @@ class AlpacaDataFetcher(BaseDataFetcher):
             )
         return self._client
 
-    def _timeframe_to_alpaca(self, timeframe: TimeFrame) -> "TimeFrame":
+    def _timeframe_to_alpaca(self, timeframe: TimeFrame) -> AlpacaTimeFrame:
         """Convert our TimeFrame to Alpaca TimeFrame."""
         from alpaca.data.timeframe import TimeFrame as AlpacaTimeFrame
         from alpaca.data.timeframe import TimeFrameUnit
@@ -292,7 +295,7 @@ class MockDataFetcher(BaseDataFetcher):
         return bars
 
 
-def get_data_fetcher(settings: "Settings | None" = None) -> BaseDataFetcher:
+def get_data_fetcher(settings: Settings | None = None) -> BaseDataFetcher:
     """
     Get the appropriate data fetcher based on settings.
 

@@ -8,8 +8,8 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
+from trader.core.models import OrderSide
 from trader.engine.backtest import BacktestEngine, BacktestResult, Trade
-from trader.core.models import OrderSide, SignalAction
 from trader.strategies.builtin.sma_crossover import SMACrossover
 
 

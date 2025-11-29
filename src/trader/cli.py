@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -13,7 +12,7 @@ from rich.table import Table
 from trader.config.settings import get_settings
 from trader.core.models import TimeFrame
 from trader.data.fetcher import get_data_fetcher
-from trader.engine.backtest import BacktestEngine
+from trader.engine.backtest import BacktestEngine, BacktestResult
 from trader.strategies.builtin.sma_crossover import SMACrossover
 
 app = typer.Typer(
@@ -57,7 +56,7 @@ async def _run_backtest(
     """Async implementation of backtest command."""
     settings = get_settings()
 
-    console.print(f"\n[bold blue]Trader Backtest[/bold blue]")
+    console.print("\n[bold blue]Trader Backtest[/bold blue]")
     console.print(f"Symbol: {symbol}")
     console.print(f"Strategy: SMA Crossover ({fast_period}/{slow_period})")
     console.print(f"Period: {days} days")
@@ -95,7 +94,7 @@ async def _run_backtest(
         strategy = SMACrossover(fast_period=fast_period, slow_period=slow_period)
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     # Run backtest
     engine = BacktestEngine(
@@ -114,7 +113,7 @@ async def _run_backtest(
     _print_results(result)
 
 
-def _print_results(result: "BacktestResult") -> None:
+def _print_results(result: BacktestResult) -> None:
     """Print backtest results using rich formatting."""
     console.print("\n")
 

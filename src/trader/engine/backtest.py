@@ -11,11 +11,8 @@ import pandas as pd
 from loguru import logger
 
 from trader.core.models import (
-    Order,
     OrderSide,
-    OrderStatus,
     Position,
-    Signal,
     SignalAction,
 )
 
@@ -207,7 +204,7 @@ class BacktestEngine:
 
     async def run(
         self,
-        strategy: "BaseStrategy",
+        strategy: BaseStrategy,
         data: pd.DataFrame,
         symbol: str,
     ) -> BacktestResult:
@@ -310,6 +307,10 @@ class BacktestEngine:
                 proceeds = close_price * position.quantity - self.commission
                 capital += proceeds
 
+                # These should always be set when we have a position
+                assert entry_price is not None
+                assert entry_time is not None
+
                 # Record trade
                 pnl = proceeds - (entry_price * position.quantity)
                 pnl_pct = float(pnl / (entry_price * position.quantity))
@@ -344,6 +345,10 @@ class BacktestEngine:
             final_price = Decimal(str(data.iloc[-1]["close"]))
             proceeds = final_price * position.quantity - self.commission
             capital += proceeds
+
+            # These should always be set when we have a position
+            assert entry_price is not None
+            assert entry_time is not None
 
             pnl = proceeds - (entry_price * position.quantity)
             pnl_pct = float(pnl / (entry_price * position.quantity))

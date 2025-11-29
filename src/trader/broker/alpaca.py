@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -44,7 +44,7 @@ class AlpacaBroker(BaseBroker):
         self._api_key = api_key
         self._secret_key = secret_key
         self._paper = paper
-        self._client: "TradingClient | None" = None
+        self._client: TradingClient | None = None
 
     @property
     def name(self) -> str:
@@ -55,7 +55,7 @@ class AlpacaBroker(BaseBroker):
         return self._paper
 
     @property
-    def client(self) -> "TradingClient":
+    def client(self) -> TradingClient:
         """Get or create the Alpaca client."""
         if self._client is None:
             raise RuntimeError("Broker not connected. Call connect() first.")
@@ -75,8 +75,8 @@ class AlpacaBroker(BaseBroker):
         account = self._client.get_account()
         logger.info(
             f"Connected to Alpaca ({'paper' if self._paper else 'live'}). "
-            f"Account: {account.account_number}, "
-            f"Equity: ${float(account.equity):,.2f}"
+            f"Account: {account.account_number}, "  # type: ignore[union-attr]
+            f"Equity: ${float(account.equity):,.2f}"  # type: ignore[union-attr,arg-type]
         )
 
     async def disconnect(self) -> None:
@@ -97,17 +97,17 @@ class AlpacaBroker(BaseBroker):
     async def get_account_value(self) -> Decimal:
         """Get total account equity."""
         account = self.client.get_account()
-        return Decimal(str(account.equity))
+        return Decimal(str(account.equity))  # type: ignore[union-attr]
 
     async def get_buying_power(self) -> Decimal:
         """Get available buying power."""
         account = self.client.get_account()
-        return Decimal(str(account.buying_power))
+        return Decimal(str(account.buying_power))  # type: ignore[union-attr]
 
     async def get_cash(self) -> Decimal:
         """Get cash balance."""
         account = self.client.get_account()
-        return Decimal(str(account.cash))
+        return Decimal(str(account.cash))  # type: ignore[union-attr]
 
     async def get_positions(self) -> list[Position]:
         """Get all open positions."""
@@ -116,14 +116,14 @@ class AlpacaBroker(BaseBroker):
         positions = []
         for ap in alpaca_positions:
             pos = Position(
-                symbol=ap.symbol,
-                quantity=int(ap.qty),
-                avg_entry_price=Decimal(str(ap.avg_entry_price)),
-                current_price=Decimal(str(ap.current_price)),
-                market_value=Decimal(str(ap.market_value)),
-                unrealized_pnl=Decimal(str(ap.unrealized_pl)),
-                unrealized_pnl_pct=float(ap.unrealized_plpc),
-                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,
+                symbol=ap.symbol,  # type: ignore[union-attr]
+                quantity=int(ap.qty),  # type: ignore[union-attr]
+                avg_entry_price=Decimal(str(ap.avg_entry_price)),  # type: ignore[union-attr]
+                current_price=Decimal(str(ap.current_price)),  # type: ignore[union-attr]
+                market_value=Decimal(str(ap.market_value)),  # type: ignore[union-attr]
+                unrealized_pnl=Decimal(str(ap.unrealized_pl)),  # type: ignore[union-attr]
+                unrealized_pnl_pct=float(ap.unrealized_plpc or 0),  # type: ignore[union-attr]
+                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,  # type: ignore[union-attr]
             )
             positions.append(pos)
 
@@ -134,14 +134,14 @@ class AlpacaBroker(BaseBroker):
         try:
             ap = self.client.get_open_position(symbol)
             return Position(
-                symbol=ap.symbol,
-                quantity=int(ap.qty),
-                avg_entry_price=Decimal(str(ap.avg_entry_price)),
-                current_price=Decimal(str(ap.current_price)),
-                market_value=Decimal(str(ap.market_value)),
-                unrealized_pnl=Decimal(str(ap.unrealized_pl)),
-                unrealized_pnl_pct=float(ap.unrealized_plpc),
-                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,
+                symbol=ap.symbol,  # type: ignore[union-attr]
+                quantity=int(ap.qty),  # type: ignore[union-attr]
+                avg_entry_price=Decimal(str(ap.avg_entry_price)),  # type: ignore[union-attr]
+                current_price=Decimal(str(ap.current_price)),  # type: ignore[union-attr]
+                market_value=Decimal(str(ap.market_value)),  # type: ignore[union-attr]
+                unrealized_pnl=Decimal(str(ap.unrealized_pl)),  # type: ignore[union-attr]
+                unrealized_pnl_pct=float(ap.unrealized_plpc or 0),  # type: ignore[union-attr]
+                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,  # type: ignore[union-attr]
             )
         except Exception:
             return None
@@ -149,14 +149,14 @@ class AlpacaBroker(BaseBroker):
     async def submit_order(self, order: Order) -> Order:
         """Submit an order to Alpaca."""
         from alpaca.trading.enums import OrderSide as AlpacaSide
-        from alpaca.trading.enums import OrderType as AlpacaType
         from alpaca.trading.enums import TimeInForce
-        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
         # Map order side
         side = AlpacaSide.BUY if order.side == OrderSide.BUY else AlpacaSide.SELL
 
         # Create order request based on type
+        request: MarketOrderRequest | LimitOrderRequest
         if order.order_type == OrderType.MARKET:
             request = MarketOrderRequest(
                 symbol=order.symbol,
@@ -165,6 +165,8 @@ class AlpacaBroker(BaseBroker):
                 time_in_force=TimeInForce.DAY,
             )
         elif order.order_type == OrderType.LIMIT:
+            if order.limit_price is None:
+                raise ValueError("Limit price required for limit orders")
             request = LimitOrderRequest(
                 symbol=order.symbol,
                 qty=order.quantity,
@@ -179,11 +181,11 @@ class AlpacaBroker(BaseBroker):
         alpaca_order = self.client.submit_order(request)
 
         # Update our order with Alpaca's response
-        order.broker_order_id = str(alpaca_order.id)
-        order.status = self._map_status(alpaca_order.status.value)
-        order.filled_quantity = int(alpaca_order.filled_qty or 0)
-        if alpaca_order.filled_avg_price:
-            order.filled_avg_price = Decimal(str(alpaca_order.filled_avg_price))
+        order.broker_order_id = str(alpaca_order.id)  # type: ignore[union-attr]
+        order.status = self._map_status(alpaca_order.status.value)  # type: ignore[union-attr]
+        order.filled_quantity = int(alpaca_order.filled_qty or 0)  # type: ignore[union-attr]
+        if alpaca_order.filled_avg_price:  # type: ignore[union-attr]
+            order.filled_avg_price = Decimal(str(alpaca_order.filled_avg_price))  # type: ignore[union-attr]
         order.updated_at = datetime.utcnow()
 
         logger.info(
@@ -254,7 +256,7 @@ class AlpacaBroker(BaseBroker):
         }
         return mapping.get(alpaca_status.lower(), OrderStatus.PENDING)
 
-    def _alpaca_order_to_order(self, ao) -> Order:
+    def _alpaca_order_to_order(self, ao: Any) -> Order:
         """Convert Alpaca order to our Order model."""
         return Order(
             symbol=ao.symbol,
@@ -263,7 +265,7 @@ class AlpacaBroker(BaseBroker):
             order_type=OrderType.MARKET if ao.type.value == "market" else OrderType.LIMIT,
             limit_price=Decimal(str(ao.limit_price)) if ao.limit_price else None,
             status=self._map_status(ao.status.value),
-            order_id=str(ao.client_order_id) if ao.client_order_id else str(ao.id),
+            order_id=str(ao.client_order_id or ao.id),
             broker_order_id=str(ao.id),
             filled_quantity=int(ao.filled_qty or 0),
             filled_avg_price=Decimal(str(ao.filled_avg_price)) if ao.filled_avg_price else None,

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from ta.trend import SMAIndicator
 
-from trader.core.models import Signal, SignalAction
+from trader.core.models import Signal
 from trader.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
@@ -105,7 +105,7 @@ class SMACrossover(BaseStrategy):
         Args:
             data: DataFrame with OHLCV and SMA indicator columns.
             symbol: Symbol to generate signal for.
-            position: Current position (if any).
+            position: Current position (unused in this strategy).
 
         Returns:
             Signal with buy/sell/hold action.

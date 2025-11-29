@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
-from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from loguru import logger
 
-from trader.core.models import Order, OrderSide, OrderType, SignalAction
+from trader.core.models import Order, OrderSide, OrderType, Signal, SignalAction
 
 if TYPE_CHECKING:
     from trader.broker.base import BaseBroker
@@ -79,10 +79,10 @@ class LiveTradingEngine:
 
     def __init__(
         self,
-        broker: "BaseBroker",
-        data_fetcher: "BaseDataFetcher",
-        strategy: "BaseStrategy",
-        risk_manager: "RiskManager",
+        broker: BaseBroker,
+        data_fetcher: BaseDataFetcher,
+        strategy: BaseStrategy,
+        risk_manager: RiskManager,
         config: EngineConfig | None = None,
     ) -> None:
         """Initialize the trading engine.
@@ -140,13 +140,11 @@ class LiveTradingEngine:
                 await self._trading_iteration()
 
                 # Wait for next check or stop signal
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         self._stop_event.wait(),
                         timeout=self.config.check_interval_seconds,
                     )
-                except asyncio.TimeoutError:
-                    pass  # Normal timeout, continue loop
 
         except Exception as e:
             self.state = EngineState.ERROR
@@ -236,6 +234,10 @@ class LiveTradingEngine:
             logger.info(f"{symbol}: Signal rejected - {risk_result.reason}")
             return
 
+        if risk_result.adjusted_quantity is None:
+            logger.warning(f"{symbol}: No quantity from risk manager")
+            return
+
         # Execute the trade
         await self._execute_signal(
             symbol=symbol,
@@ -246,7 +248,7 @@ class LiveTradingEngine:
     async def _execute_signal(
         self,
         symbol: str,
-        signal: "Signal",
+        signal: Signal,
         quantity: int,
     ) -> None:
         """Execute a trading signal."""

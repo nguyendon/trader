@@ -44,15 +44,15 @@ def sample_bars() -> list[Bar]:
     ]
 
     bars = []
-    for i, (o, h, l, c) in enumerate(prices):
+    for i, (open_p, high_p, low_p, close_p) in enumerate(prices):
         bars.append(
             Bar(
                 symbol="TEST",
                 timestamp=base_time.replace(day=i + 1),
-                open=Decimal(str(o)),
-                high=Decimal(str(h)),
-                low=Decimal(str(l)),
-                close=Decimal(str(c)),
+                open=Decimal(str(open_p)),
+                high=Decimal(str(high_p)),
+                low=Decimal(str(low_p)),
+                close=Decimal(str(close_p)),
                 volume=100_000 + i * 10_000,
             )
         )

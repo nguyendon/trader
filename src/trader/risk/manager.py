@@ -88,7 +88,7 @@ class RiskManager:
         portfolio_value: Decimal,
         current_price: Decimal,
         open_positions: int = 0,
-        existing_position: "Position | None" = None,
+        existing_position: Position | None = None,
         daily_pnl: Decimal | None = None,
     ) -> RiskCheckResult:
         """
@@ -158,16 +158,18 @@ class RiskManager:
         portfolio_value: Decimal,
         current_price: Decimal,
         open_positions: int,
-        existing_position: "Position | None",
+        existing_position: Position | None,
     ) -> RiskCheckResult:
         """Check buy signal against risk rules."""
         # Check max positions
-        if open_positions >= self.config.max_open_positions:
-            if existing_position is None:
-                return RiskCheckResult(
-                    approved=False,
-                    reason=f"Max positions reached: {open_positions}",
-                )
+        if (
+            open_positions >= self.config.max_open_positions
+            and existing_position is None
+        ):
+            return RiskCheckResult(
+                approved=False,
+                reason=f"Max positions reached: {open_positions}",
+            )
 
         # Calculate position size
         quantity = self.calculate_position_size(
@@ -209,7 +211,7 @@ class RiskManager:
     def _check_sell_signal(
         self,
         signal: Signal,
-        existing_position: "Position | None",
+        existing_position: Position | None,
         current_price: Decimal,
     ) -> RiskCheckResult:
         """Check sell signal against risk rules."""
@@ -238,7 +240,7 @@ class RiskManager:
         self,
         portfolio_value: Decimal,
         current_price: Decimal,
-        existing_position: "Position | None" = None,
+        existing_position: Position | None = None,
     ) -> int:
         """
         Calculate the number of shares to buy.

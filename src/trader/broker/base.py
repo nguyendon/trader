@@ -64,18 +64,18 @@ class BaseBroker(ABC):
 
     # Positions
     @abstractmethod
-    async def get_positions(self) -> list["Position"]:
+    async def get_positions(self) -> list[Position]:
         """Get all open positions."""
         pass
 
     @abstractmethod
-    async def get_position(self, symbol: str) -> "Position | None":
+    async def get_position(self, symbol: str) -> Position | None:
         """Get position for a specific symbol."""
         pass
 
     # Orders
     @abstractmethod
-    async def submit_order(self, order: "Order") -> "Order":
+    async def submit_order(self, order: Order) -> Order:
         """
         Submit an order to the broker.
 
@@ -101,12 +101,12 @@ class BaseBroker(ABC):
         pass
 
     @abstractmethod
-    async def get_order(self, order_id: str) -> "Order | None":
+    async def get_order(self, order_id: str) -> Order | None:
         """Get order by ID."""
         pass
 
     @abstractmethod
-    async def get_open_orders(self) -> list["Order"]:
+    async def get_open_orders(self) -> list[Order]:
         """Get all open orders."""
         pass
 
@@ -117,11 +117,16 @@ class BaseBroker(ABC):
         pass
 
     # Context manager support
-    async def __aenter__(self) -> "BaseBroker":
+    async def __aenter__(self) -> BaseBroker:
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         """Async context manager exit."""
         await self.disconnect()

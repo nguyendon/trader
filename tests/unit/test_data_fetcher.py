@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 import pytest
 
@@ -129,7 +128,7 @@ class TestMockDataFetcher:
         bars1 = await fetcher1.fetch_bars("TEST", TimeFrame.DAY, start, end)
         bars2 = await fetcher2.fetch_bars("TEST", TimeFrame.DAY, start, end)
 
-        for b1, b2 in zip(bars1, bars2):
+        for b1, b2 in zip(bars1, bars2, strict=True):
             assert b1.close == b2.close
             assert b1.volume == b2.volume
 
@@ -146,7 +145,9 @@ class TestMockDataFetcher:
         bars2 = await fetcher2.fetch_bars("TEST", TimeFrame.DAY, start, end)
 
         # At least some prices should be different
-        different = any(b1.close != b2.close for b1, b2 in zip(bars1, bars2))
+        different = any(
+            b1.close != b2.close for b1, b2 in zip(bars1, bars2, strict=True)
+        )
         assert different
 
     @pytest.mark.asyncio
