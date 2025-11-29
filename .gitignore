@@ -62,3 +62,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code - only ignore local settings
+.claude/settings.local.json
