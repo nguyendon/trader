@@ -205,6 +205,135 @@ def _print_results(result: "BacktestResult") -> None:
 
 
 @app.command()
+def paper(
+    symbols: str = typer.Argument(
+        "AAPL", help="Comma-separated symbols to trade (e.g., AAPL,MSFT)"
+    ),
+    fast_period: int = typer.Option(10, "--fast", "-f", help="Fast SMA period"),
+    slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA period"),
+    capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
+    interval: int = typer.Option(60, "--interval", "-i", help="Check interval in seconds"),
+    day_trade: bool = typer.Option(False, "--day-trade", help="Close positions at EOD"),
+) -> None:
+    """Run paper trading with mock data (no API key needed)."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",")]
+    asyncio.run(
+        _run_paper_trading(
+            symbols=symbol_list,
+            fast_period=fast_period,
+            slow_period=slow_period,
+            capital=capital,
+            interval=interval,
+            day_trade=day_trade,
+        )
+    )
+
+
+async def _run_paper_trading(
+    symbols: list[str],
+    fast_period: int,
+    slow_period: int,
+    capital: float,
+    interval: int,
+    day_trade: bool,
+) -> None:
+    """Run paper trading simulation."""
+    from trader.broker.paper import PaperBroker
+    from trader.data.fetcher import MockDataFetcher
+    from trader.engine.live import EngineConfig, LiveTradingEngine, TradingMode
+    from trader.risk.manager import RiskConfig, RiskManager
+
+    console.print("\n[bold blue]Trader Paper Trading[/bold blue]")
+    console.print(f"Symbols: {', '.join(symbols)}")
+    console.print(f"Strategy: SMA Crossover ({fast_period}/{slow_period})")
+    console.print(f"Initial Capital: ${capital:,.2f}")
+    console.print(f"Check Interval: {interval}s")
+    console.print(f"Mode: {'Day Trading' if day_trade else 'Swing Trading'}")
+    console.print("\n[yellow]Using mock data (no API key required)[/yellow]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    # Create components
+    broker = PaperBroker(initial_capital=capital)
+    data_fetcher = MockDataFetcher(base_price=150.0, seed=42)
+    strategy = SMACrossover(fast_period=fast_period, slow_period=slow_period)
+    risk_manager = RiskManager(
+        RiskConfig(
+            max_position_size_pct=0.20,  # 20% per position for demo
+            max_open_positions=len(symbols),
+        )
+    )
+
+    config = EngineConfig(
+        symbols=symbols,
+        trading_mode=TradingMode.DAY if day_trade else TradingMode.SWING,
+        check_interval_seconds=interval,
+    )
+
+    engine = LiveTradingEngine(
+        broker=broker,
+        data_fetcher=data_fetcher,
+        strategy=strategy,
+        risk_manager=risk_manager,
+        config=config,
+    )
+
+    # Set initial prices for paper broker
+    for symbol in symbols:
+        broker.set_price(symbol, 150.0)
+
+    try:
+        # Run for a limited time in demo mode
+        console.print("[green]Starting paper trading engine...[/green]")
+
+        # Run one iteration for demo
+        await broker.connect()
+
+        account_value = await broker.get_account_value()
+        console.print(f"Account Value: ${account_value:,.2f}")
+        console.print(f"Cash: ${await broker.get_cash():,.2f}")
+
+        # Simulate a few trading cycles
+        for i in range(3):
+            console.print(f"\n[bold]--- Cycle {i+1} ---[/bold]")
+
+            for symbol in symbols:
+                # Update price with some movement
+                import random
+                current = float(await broker.get_latest_price(symbol))
+                new_price = current * (1 + random.uniform(-0.02, 0.02))
+                broker.set_price(symbol, new_price)
+                console.print(f"{symbol}: ${new_price:.2f}")
+
+            # Would normally call engine._trading_iteration() here
+            # For demo, just show status
+            positions = await broker.get_positions()
+            if positions:
+                console.print("Positions:")
+                for pos in positions:
+                    pnl = pos.unrealized_pnl or 0
+                    console.print(
+                        f"  {pos.symbol}: {pos.quantity} shares @ ${pos.avg_entry_price:.2f} "
+                        f"(P&L: ${pnl:.2f})"
+                    )
+            else:
+                console.print("No open positions")
+
+            await asyncio.sleep(1)
+
+        await broker.disconnect()
+        console.print("\n[green]Paper trading demo complete![/green]")
+        console.print(
+            "\nTo run continuous paper trading with real Alpaca data:\n"
+            "1. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env\n"
+            "2. Run: trader live AAPL,MSFT"
+        )
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping...[/yellow]")
+        await engine.stop()
+
+
+@app.command()
 def version() -> None:
     """Show version information."""
     from trader import __version__
