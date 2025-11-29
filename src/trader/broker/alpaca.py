@@ -1,0 +1,270 @@
+"""Alpaca broker implementation."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+from loguru import logger
+
+from trader.broker.base import BaseBroker
+from trader.core.models import Order, OrderSide, OrderStatus, OrderType, Position
+
+if TYPE_CHECKING:
+    from alpaca.trading.client import TradingClient
+
+
+class AlpacaBroker(BaseBroker):
+    """
+    Alpaca broker implementation for paper and live trading.
+
+    This broker connects to Alpaca's trading API to submit orders
+    and manage positions. Supports both paper and live trading.
+
+    Requires Alpaca API credentials to be set in environment:
+    - ALPACA_API_KEY
+    - ALPACA_SECRET_KEY
+    - ALPACA_PAPER (true/false)
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        secret_key: str,
+        paper: bool = True,
+    ) -> None:
+        """Initialize Alpaca broker.
+
+        Args:
+            api_key: Alpaca API key
+            secret_key: Alpaca secret key
+            paper: Whether to use paper trading (default True)
+        """
+        self._api_key = api_key
+        self._secret_key = secret_key
+        self._paper = paper
+        self._client: "TradingClient | None" = None
+
+    @property
+    def name(self) -> str:
+        return "alpaca"
+
+    @property
+    def is_paper(self) -> bool:
+        return self._paper
+
+    @property
+    def client(self) -> "TradingClient":
+        """Get or create the Alpaca client."""
+        if self._client is None:
+            raise RuntimeError("Broker not connected. Call connect() first.")
+        return self._client
+
+    async def connect(self) -> None:
+        """Connect to Alpaca API."""
+        from alpaca.trading.client import TradingClient
+
+        self._client = TradingClient(
+            api_key=self._api_key,
+            secret_key=self._secret_key,
+            paper=self._paper,
+        )
+
+        # Verify connection by getting account
+        account = self._client.get_account()
+        logger.info(
+            f"Connected to Alpaca ({'paper' if self._paper else 'live'}). "
+            f"Account: {account.account_number}, "
+            f"Equity: ${float(account.equity):,.2f}"
+        )
+
+    async def disconnect(self) -> None:
+        """Disconnect from Alpaca (cleanup)."""
+        self._client = None
+        logger.info("Disconnected from Alpaca")
+
+    async def is_connected(self) -> bool:
+        """Check if connected."""
+        if self._client is None:
+            return False
+        try:
+            self._client.get_account()
+            return True
+        except Exception:
+            return False
+
+    async def get_account_value(self) -> Decimal:
+        """Get total account equity."""
+        account = self.client.get_account()
+        return Decimal(str(account.equity))
+
+    async def get_buying_power(self) -> Decimal:
+        """Get available buying power."""
+        account = self.client.get_account()
+        return Decimal(str(account.buying_power))
+
+    async def get_cash(self) -> Decimal:
+        """Get cash balance."""
+        account = self.client.get_account()
+        return Decimal(str(account.cash))
+
+    async def get_positions(self) -> list[Position]:
+        """Get all open positions."""
+        alpaca_positions = self.client.get_all_positions()
+
+        positions = []
+        for ap in alpaca_positions:
+            pos = Position(
+                symbol=ap.symbol,
+                quantity=int(ap.qty),
+                avg_entry_price=Decimal(str(ap.avg_entry_price)),
+                current_price=Decimal(str(ap.current_price)),
+                market_value=Decimal(str(ap.market_value)),
+                unrealized_pnl=Decimal(str(ap.unrealized_pl)),
+                unrealized_pnl_pct=float(ap.unrealized_plpc),
+                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,
+            )
+            positions.append(pos)
+
+        return positions
+
+    async def get_position(self, symbol: str) -> Position | None:
+        """Get position for a symbol."""
+        try:
+            ap = self.client.get_open_position(symbol)
+            return Position(
+                symbol=ap.symbol,
+                quantity=int(ap.qty),
+                avg_entry_price=Decimal(str(ap.avg_entry_price)),
+                current_price=Decimal(str(ap.current_price)),
+                market_value=Decimal(str(ap.market_value)),
+                unrealized_pnl=Decimal(str(ap.unrealized_pl)),
+                unrealized_pnl_pct=float(ap.unrealized_plpc),
+                side=OrderSide.BUY if int(ap.qty) > 0 else OrderSide.SELL,
+            )
+        except Exception:
+            return None
+
+    async def submit_order(self, order: Order) -> Order:
+        """Submit an order to Alpaca."""
+        from alpaca.trading.enums import OrderSide as AlpacaSide
+        from alpaca.trading.enums import OrderType as AlpacaType
+        from alpaca.trading.enums import TimeInForce
+        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+
+        # Map order side
+        side = AlpacaSide.BUY if order.side == OrderSide.BUY else AlpacaSide.SELL
+
+        # Create order request based on type
+        if order.order_type == OrderType.MARKET:
+            request = MarketOrderRequest(
+                symbol=order.symbol,
+                qty=order.quantity,
+                side=side,
+                time_in_force=TimeInForce.DAY,
+            )
+        elif order.order_type == OrderType.LIMIT:
+            request = LimitOrderRequest(
+                symbol=order.symbol,
+                qty=order.quantity,
+                side=side,
+                time_in_force=TimeInForce.DAY,
+                limit_price=float(order.limit_price),
+            )
+        else:
+            raise NotImplementedError(f"Order type {order.order_type} not supported")
+
+        # Submit order
+        alpaca_order = self.client.submit_order(request)
+
+        # Update our order with Alpaca's response
+        order.broker_order_id = str(alpaca_order.id)
+        order.status = self._map_status(alpaca_order.status.value)
+        order.filled_quantity = int(alpaca_order.filled_qty or 0)
+        if alpaca_order.filled_avg_price:
+            order.filled_avg_price = Decimal(str(alpaca_order.filled_avg_price))
+        order.updated_at = datetime.utcnow()
+
+        logger.info(
+            f"Submitted {order.side.value} order: {order.quantity} {order.symbol} "
+            f"(id: {order.broker_order_id}, status: {order.status.value})"
+        )
+
+        return order
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """Cancel an order by ID."""
+        try:
+            self.client.cancel_order_by_id(order_id)
+            logger.info(f"Cancelled order {order_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to cancel order {order_id}: {e}")
+            return False
+
+    async def get_order(self, order_id: str) -> Order | None:
+        """Get order by ID."""
+        try:
+            ao = self.client.get_order_by_id(order_id)
+            return self._alpaca_order_to_order(ao)
+        except Exception:
+            return None
+
+    async def get_open_orders(self) -> list[Order]:
+        """Get all open orders."""
+        alpaca_orders = self.client.get_orders()
+        return [self._alpaca_order_to_order(ao) for ao in alpaca_orders]
+
+    async def get_latest_price(self, symbol: str) -> Decimal:
+        """Get latest price for a symbol."""
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestQuoteRequest
+
+        data_client = StockHistoricalDataClient(
+            api_key=self._api_key,
+            secret_key=self._secret_key,
+        )
+
+        request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+        quotes = data_client.get_stock_latest_quote(request)
+
+        if symbol in quotes:
+            # Use mid price
+            quote = quotes[symbol]
+            mid = (float(quote.ask_price) + float(quote.bid_price)) / 2
+            return Decimal(str(mid))
+
+        raise ValueError(f"No quote available for {symbol}")
+
+    def _map_status(self, alpaca_status: str) -> OrderStatus:
+        """Map Alpaca order status to our OrderStatus."""
+        mapping = {
+            "new": OrderStatus.SUBMITTED,
+            "accepted": OrderStatus.SUBMITTED,
+            "pending_new": OrderStatus.PENDING,
+            "accepted_for_bidding": OrderStatus.SUBMITTED,
+            "filled": OrderStatus.FILLED,
+            "partially_filled": OrderStatus.PARTIALLY_FILLED,
+            "canceled": OrderStatus.CANCELLED,
+            "expired": OrderStatus.CANCELLED,
+            "rejected": OrderStatus.REJECTED,
+            "pending_cancel": OrderStatus.SUBMITTED,
+            "pending_replace": OrderStatus.SUBMITTED,
+        }
+        return mapping.get(alpaca_status.lower(), OrderStatus.PENDING)
+
+    def _alpaca_order_to_order(self, ao) -> Order:
+        """Convert Alpaca order to our Order model."""
+        return Order(
+            symbol=ao.symbol,
+            side=OrderSide.BUY if ao.side.value == "buy" else OrderSide.SELL,
+            quantity=int(ao.qty),
+            order_type=OrderType.MARKET if ao.type.value == "market" else OrderType.LIMIT,
+            limit_price=Decimal(str(ao.limit_price)) if ao.limit_price else None,
+            status=self._map_status(ao.status.value),
+            order_id=str(ao.client_order_id) if ao.client_order_id else str(ao.id),
+            broker_order_id=str(ao.id),
+            filled_quantity=int(ao.filled_qty or 0),
+            filled_avg_price=Decimal(str(ao.filled_avg_price)) if ao.filled_avg_price else None,
+        )
