@@ -97,9 +97,10 @@ class TestSMACrossover:
         """Test buy signal on bullish crossover."""
         strategy = SMACrossover(fast_period=3, slow_period=5)
 
-        # Create data where fast SMA crosses above slow SMA
-        # Start with downtrend, then strong uptrend
-        prices = [100, 99, 98, 97, 96, 95, 100, 105, 110, 115, 120]
+        # Create data where fast SMA crosses above slow SMA on the LAST bar
+        # Previous: fast < slow, Current: fast > slow
+        # We need: declining prices (so fast < slow), then sharp spike on last bar
+        prices = [120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 120]
         data = pd.DataFrame(
             {"close": prices},
             index=pd.date_range("2024-01-01", periods=len(prices)),
@@ -116,9 +117,10 @@ class TestSMACrossover:
         """Test sell signal on bearish crossover."""
         strategy = SMACrossover(fast_period=3, slow_period=5)
 
-        # Create data where fast SMA crosses below slow SMA
-        # Start with uptrend, then sharp downtrend
-        prices = [100, 101, 102, 103, 104, 105, 100, 95, 90, 85, 80]
+        # Create data where fast SMA crosses below slow SMA on the LAST bar
+        # Previous: fast > slow, Current: fast < slow
+        # We need: rising prices (so fast > slow), then sharp drop on last bar
+        prices = [80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 80]
         data = pd.DataFrame(
             {"close": prices},
             index=pd.date_range("2024-01-01", periods=len(prices)),
