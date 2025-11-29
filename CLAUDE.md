@@ -4,20 +4,33 @@
 
 An automated stock trading platform built with Python and Alpaca for backtesting, paper trading, and live trading.
 
+**Current Status**: Phase 1 (Backtesting) and Phase 2 (Paper Trading) complete. See `.claude/plans/implementation-plan.md` for roadmap.
+
 ## Tech Stack
 
 - **Python 3.11+** with full async/await
+- **uv** for dependency management (fast, creates .venv automatically)
 - **Alpaca** for broker integration (paper + live trading)
-- **backtesting.py** for strategy backtesting
-- **SQLite** for data caching (MVP), PostgreSQL later
 - **Pydantic** for configuration and validation
 - **pytest** + **pytest-asyncio** for testing
+- **ruff** for linting + formatting
+- **mypy** for type checking
+
+## Quick Commands
+
+```bash
+just              # List all commands
+just check        # Run lint + typecheck + tests
+just test         # Run tests only
+just backtest AAPL --days 365
+just paper AAPL,MSFT
+```
 
 ## Code Conventions
 
 ### Python Style
 
-- Follow PEP 8 with 88 character line length (Black default)
+- Follow PEP 8 with 88 character line length (ruff default)
 - Use type hints for all function signatures
 - Use `from __future__ import annotations` for forward references
 - Prefer `dataclasses` or `pydantic.BaseModel` for data structures
@@ -39,6 +52,8 @@ from pydantic import BaseModel
 # Local
 from trader.core.models import Signal
 ```
+
+Import order is enforced by ruff (isort rules).
 
 ### Naming Conventions
 
@@ -109,14 +124,9 @@ def test_<function_name>_<scenario>_<expected_result>():
 ### Running Tests
 
 ```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src/trader --cov-report=term-missing
-
-# Run specific module
-pytest tests/unit/test_strategies.py
+just test                    # Run all tests
+just test-cov                # Run with coverage
+uv run pytest tests/unit/    # Run specific directory
 ```
 
 ## Project Structure
@@ -125,16 +135,18 @@ pytest tests/unit/test_strategies.py
 trader/
 ├── src/trader/
 │   ├── config/       # Settings, configuration
-│   ├── core/         # Domain models, events
-│   ├── data/         # Data fetching, storage
+│   ├── core/         # Domain models (Bar, Signal, Order, Position)
+│   ├── data/         # Data fetching (Alpaca + Mock)
 │   ├── strategies/   # Trading strategies
-│   ├── broker/       # Broker integrations
+│   ├── broker/       # Broker integrations (Paper, Alpaca)
 │   ├── risk/         # Risk management
-│   ├── engine/       # Backtest & live engines
-│   └── portfolio/    # Portfolio tracking
-├── scripts/          # CLI entry points
-├── tests/            # Test suite
-└── notebooks/        # Jupyter notebooks
+│   ├── engine/       # Backtest & live trading engines
+│   └── cli.py        # CLI entry point
+├── scripts/          # Utility scripts
+├── tests/            # Test suite (101 tests)
+├── .claude/          # Claude Code skills & plans
+├── justfile          # Dev commands
+└── pyproject.toml    # Project config
 ```
 
 ## Development Workflow
@@ -142,14 +154,13 @@ trader/
 1. Create feature branch from `main`
 2. Write tests first (TDD encouraged)
 3. Implement feature
-4. Run `pytest` and ensure passing
-5. Run `ruff check` for linting
-6. Commit with conventional commit message
-7. Create PR when ready
+4. Run `just check` (lint + typecheck + tests)
+5. Commit with conventional commit message
+6. Create PR when ready
 
 ## Environment Variables
 
-Required in `.env`:
+Optional in `.env` (mock data works without these):
 ```
 ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
@@ -161,10 +172,34 @@ ALPACA_PAPER=true
 ### Strategy Pattern
 All trading strategies inherit from `BaseStrategy` and implement:
 - `calculate_indicators(data: pd.DataFrame) -> pd.DataFrame`
-- `generate_signal(data: pd.DataFrame) -> Signal`
+- `generate_signal(data: pd.DataFrame, symbol: str, position: Position | None) -> Signal`
 
 ### Broker Abstraction
-All brokers implement `IBroker` interface for easy swapping.
+All brokers implement `BaseBroker` interface:
+- `PaperBroker` - Simulated trading for testing
+- `AlpacaBroker` - Real/paper trading via Alpaca API
 
-### Event-Driven (Phase 3)
-Components communicate via `EventBus` for loose coupling.
+### Risk Management
+`RiskManager` enforces:
+- Position sizing limits
+- Daily loss limits
+- Max positions
+- Stop loss / take profit
+
+## Linting & Type Checking
+
+Configured in `pyproject.toml`:
+
+```bash
+just lint       # Run ruff check
+just typecheck  # Run mypy
+just lint-fix   # Auto-fix linting issues
+```
+
+Rules enforced:
+- E, W, F: pycodestyle errors/warnings, pyflakes
+- I: isort (import ordering)
+- B: bugbear (common bugs)
+- C4: comprehensions
+- UP: pyupgrade
+- SIM: simplify
