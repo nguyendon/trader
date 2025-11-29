@@ -13,7 +13,7 @@ from trader.config.settings import get_settings
 from trader.core.models import TimeFrame
 from trader.data.fetcher import get_data_fetcher
 from trader.engine.backtest import BacktestEngine, BacktestResult
-from trader.strategies.builtin.sma_crossover import SMACrossover
+from trader.strategies.registry import get_strategy, list_strategies
 
 app = typer.Typer(
     name="trader",
@@ -26,16 +26,18 @@ console = Console()
 @app.command()
 def backtest(
     symbol: str = typer.Argument(..., help="Stock symbol to backtest (e.g., AAPL)"),
+    strategy: str = typer.Option("sma", "--strategy", "-S", help="Strategy: sma, rsi, macd, momentum"),
     days: int = typer.Option(365, "--days", "-d", help="Number of days of history"),
-    fast_period: int = typer.Option(10, "--fast", "-f", help="Fast SMA period"),
-    slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA period"),
+    fast_period: int = typer.Option(10, "--fast", "-f", help="Fast SMA/MACD period"),
+    slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA/MACD period"),
     capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
     commission: float = typer.Option(0.0, "--commission", help="Commission per trade"),
 ) -> None:
-    """Run a backtest with the SMA crossover strategy."""
+    """Run a backtest with a trading strategy."""
     asyncio.run(
         _run_backtest(
             symbol=symbol,
+            strategy_name=strategy,
             days=days,
             fast_period=fast_period,
             slow_period=slow_period,
@@ -47,6 +49,7 @@ def backtest(
 
 async def _run_backtest(
     symbol: str,
+    strategy_name: str,
     days: int,
     fast_period: int,
     slow_period: int,
@@ -56,9 +59,25 @@ async def _run_backtest(
     """Async implementation of backtest command."""
     settings = get_settings()
 
+    # Create strategy based on name
+    try:
+        if strategy_name.lower() == "sma":
+            strategy = get_strategy("sma", fast_period=fast_period, slow_period=slow_period)
+        elif strategy_name.lower() == "macd":
+            strategy = get_strategy("macd", fast_period=fast_period, slow_period=slow_period)
+        elif strategy_name.lower() == "rsi":
+            strategy = get_strategy("rsi")
+        elif strategy_name.lower() == "momentum":
+            strategy = get_strategy("momentum")
+        else:
+            strategy = get_strategy(strategy_name)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
     console.print("\n[bold blue]Trader Backtest[/bold blue]")
     console.print(f"Symbol: {symbol}")
-    console.print(f"Strategy: SMA Crossover ({fast_period}/{slow_period})")
+    console.print(f"Strategy: {strategy.description}")
     console.print(f"Period: {days} days")
     console.print(f"Initial Capital: ${capital:,.2f}")
 
@@ -88,13 +107,6 @@ async def _run_backtest(
         raise typer.Exit(1)
 
     console.print(f"Fetched {len(data)} bars")
-
-    # Create strategy
-    try:
-        strategy = SMACrossover(fast_period=fast_period, slow_period=slow_period)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
 
     # Run backtest
     engine = BacktestEngine(
@@ -254,7 +266,7 @@ async def _run_paper_trading(
     # Create components
     broker = PaperBroker(initial_capital=capital)
     data_fetcher = MockDataFetcher(base_price=150.0, seed=42)
-    strategy = SMACrossover(fast_period=fast_period, slow_period=slow_period)
+    strategy = get_strategy("sma", fast_period=fast_period, slow_period=slow_period)
     risk_manager = RiskManager(
         RiskConfig(
             max_position_size_pct=0.20,  # 20% per position for demo
@@ -331,6 +343,23 @@ async def _run_paper_trading(
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopping...[/yellow]")
         await engine.stop()
+
+
+@app.command()
+def strategies() -> None:
+    """List all available trading strategies."""
+    console.print("\n[bold blue]Available Strategies[/bold blue]\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Description")
+
+    for strat in list_strategies():
+        table.add_row(strat["name"], strat["description"])
+
+    console.print(table)
+    console.print("\n[dim]Use --strategy/-S to select a strategy for backtesting[/dim]")
+    console.print("[dim]Example: trader backtest AAPL --strategy rsi[/dim]\n")
 
 
 @app.command()
