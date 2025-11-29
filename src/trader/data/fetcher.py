@@ -161,8 +161,11 @@ class AlpacaDataFetcher(BaseDataFetcher):
         response = self.client.get_stock_bars(request)
 
         bars = []
-        if symbol in response:
-            for bar_data in response[symbol]:
+        # Access bars via response[symbol] - the BarSet supports __getitem__
+        # but not __contains__, so we use try/except instead of 'in'
+        try:
+            symbol_bars = response[symbol]
+            for bar_data in symbol_bars:
                 bars.append(
                     Bar(
                         symbol=symbol,
@@ -175,6 +178,8 @@ class AlpacaDataFetcher(BaseDataFetcher):
                         timeframe=timeframe,
                     )
                 )
+        except KeyError:
+            logger.warning(f"No bars found for {symbol}")
 
         logger.debug(f"Fetched {len(bars)} bars for {symbol}")
         return bars
