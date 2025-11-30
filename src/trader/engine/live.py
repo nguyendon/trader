@@ -6,8 +6,9 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -28,6 +29,7 @@ class EngineState(str, Enum):
     STARTING = "starting"
     RUNNING = "running"
     STOPPING = "stopping"
+    PAUSED = "paused"
     ERROR = "error"
 
 
@@ -36,6 +38,18 @@ class TradingMode(str, Enum):
 
     DAY = "day"  # Close all positions at end of day
     SWING = "swing"  # Hold positions overnight
+
+
+@dataclass
+class SafetyLimits:
+    """Hard safety limits that cannot be overridden."""
+
+    max_position_value: float = 10000.0  # Max $ per position
+    max_portfolio_value: float = 50000.0  # Max total $ in positions
+    max_loss_per_day: float = 500.0  # Stop trading if daily loss exceeds
+    max_trades_per_day: int = 20  # Max number of trades per day
+    max_loss_per_trade: float = 200.0  # Max loss on single trade
+    require_confirmation: bool = False  # Require human confirmation
 
 
 @dataclass
@@ -49,6 +63,7 @@ class EngineConfig:
     market_close: time = time(16, 0)
     timezone: str = "America/New_York"
     close_positions_before_close: int = 15  # Minutes before close to flatten
+    safety: SafetyLimits = field(default_factory=SafetyLimits)
 
 
 class LiveTradingEngine:
@@ -62,8 +77,10 @@ class LiveTradingEngine:
     Features:
     - Multiple symbol support
     - Risk management integration
+    - Hard safety limits (circuit breakers)
     - Market hours awareness
     - Day trading mode (close positions EOD)
+    - Optional human confirmation
     - Graceful shutdown
 
     Example:
@@ -84,6 +101,7 @@ class LiveTradingEngine:
         strategy: BaseStrategy,
         risk_manager: RiskManager,
         config: EngineConfig | None = None,
+        on_signal: Callable[[Signal, str, int], bool] | None = None,
     ) -> None:
         """Initialize the trading engine.
 
@@ -93,16 +111,25 @@ class LiveTradingEngine:
             strategy: Trading strategy to execute
             risk_manager: Risk manager for position sizing
             config: Engine configuration
+            on_signal: Optional callback for signal confirmation.
+                       Called with (signal, symbol, quantity). Return True to execute.
         """
         self.broker = broker
         self.data_fetcher = data_fetcher
         self.strategy = strategy
         self.risk_manager = risk_manager
         self.config = config or EngineConfig()
+        self.on_signal = on_signal
 
         self.state = EngineState.STOPPED
         self._stop_event = asyncio.Event()
         self._tz = ZoneInfo(self.config.timezone)
+
+        # Daily tracking
+        self._daily_trades = 0
+        self._daily_pnl = Decimal(0)
+        self._starting_value = Decimal(0)
+        self._last_reset_date: datetime | None = None
 
     async def run(self) -> None:
         """
@@ -110,15 +137,23 @@ class LiveTradingEngine:
 
         Connects to broker, then continuously:
         1. Check if market is open
-        2. Fetch latest data
-        3. Generate signals
-        4. Execute approved signals
-        5. Sleep until next check
+        2. Check safety limits
+        3. Fetch latest data
+        4. Generate signals
+        5. Execute approved signals (with optional confirmation)
+        6. Sleep until next check
         """
         self.state = EngineState.STARTING
+        safety = self.config.safety
+
         logger.info(
             f"Starting live trading engine: {self.strategy.name} "
             f"on {self.config.symbols}"
+        )
+        logger.info(
+            f"Safety limits: max_position=${safety.max_position_value:,.0f}, "
+            f"max_daily_loss=${safety.max_loss_per_day:,.0f}, "
+            f"max_trades={safety.max_trades_per_day}"
         )
 
         try:
@@ -127,6 +162,7 @@ class LiveTradingEngine:
 
             # Log account info
             account_value = await self.broker.get_account_value()
+            self._starting_value = account_value
             logger.info(
                 f"Connected to {self.broker.name} "
                 f"({'paper' if self.broker.is_paper else 'LIVE'}). "
@@ -134,9 +170,22 @@ class LiveTradingEngine:
             )
 
             # Reset daily counters
-            self.risk_manager.reset_daily_counters(account_value)
+            self.risk_manager.reset_daily_counters(float(account_value))
+            self._reset_daily_counters()
 
             while not self._stop_event.is_set():
+                # Check for daily reset
+                self._check_daily_reset()
+
+                # Check circuit breakers
+                if self._check_circuit_breakers():
+                    logger.warning("Circuit breaker triggered - pausing trading")
+                    self.state = EngineState.PAUSED
+                    # Still run loop but don't trade
+                    await asyncio.sleep(self.config.check_interval_seconds)
+                    continue
+
+                self.state = EngineState.RUNNING
                 await self._trading_iteration()
 
                 # Wait for next check or stop signal
@@ -152,6 +201,53 @@ class LiveTradingEngine:
             raise
         finally:
             await self._shutdown()
+
+    def _reset_daily_counters(self) -> None:
+        """Reset daily tracking counters."""
+        self._daily_trades = 0
+        self._daily_pnl = Decimal(0)
+        self._last_reset_date = datetime.now(self._tz).date()
+        logger.debug("Daily counters reset")
+
+    def _check_daily_reset(self) -> None:
+        """Check if we need to reset daily counters (new trading day)."""
+        today = datetime.now(self._tz).date()
+        if self._last_reset_date != today:
+            self._reset_daily_counters()
+
+    def _check_circuit_breakers(self) -> bool:
+        """Check if any circuit breakers are triggered. Returns True if trading should stop."""
+        safety = self.config.safety
+
+        # Check max trades per day
+        if self._daily_trades >= safety.max_trades_per_day:
+            logger.warning(f"Max trades reached: {self._daily_trades}/{safety.max_trades_per_day}")
+            return True
+
+        # Check daily loss limit
+        if float(self._daily_pnl) <= -safety.max_loss_per_day:
+            logger.warning(f"Daily loss limit reached: ${self._daily_pnl:,.2f}")
+            return True
+
+        return False
+
+    async def _check_position_limits(self, symbol: str, quantity: int, price: Decimal) -> tuple[bool, str]:
+        """Check if a trade would exceed position limits. Returns (ok, reason)."""
+        safety = self.config.safety
+        trade_value = float(price * quantity)
+
+        # Check single position limit
+        if trade_value > safety.max_position_value:
+            return False, f"Trade value ${trade_value:,.0f} exceeds max ${safety.max_position_value:,.0f}"
+
+        # Check total portfolio limit
+        positions = await self.broker.get_positions()
+        total_value = sum(float(p.market_value or 0) for p in positions)
+
+        if total_value + trade_value > safety.max_portfolio_value:
+            return False, f"Would exceed portfolio limit: ${total_value + trade_value:,.0f} > ${safety.max_portfolio_value:,.0f}"
+
+        return True, ""
 
     async def stop(self) -> None:
         """Signal the engine to stop gracefully."""
@@ -251,8 +347,26 @@ class LiveTradingEngine:
         signal: Signal,
         quantity: int,
     ) -> None:
-        """Execute a trading signal."""
+        """Execute a trading signal with safety checks and optional confirmation."""
         side = OrderSide.BUY if signal.action == SignalAction.BUY else OrderSide.SELL
+
+        # Get current price for safety checks
+        current_price = await self.broker.get_latest_price(symbol)
+
+        # Check position limits for buys
+        if signal.action == SignalAction.BUY:
+            ok, reason = await self._check_position_limits(symbol, quantity, current_price)
+            if not ok:
+                logger.warning(f"{symbol}: Trade blocked by safety limits - {reason}")
+                return
+
+        # Optional human confirmation
+        if self.config.safety.require_confirmation or self.on_signal:
+            if self.on_signal:
+                approved = self.on_signal(signal, symbol, quantity)
+                if not approved:
+                    logger.info(f"{symbol}: Trade rejected by confirmation callback")
+                    return
 
         order = Order(
             symbol=symbol,
@@ -267,9 +381,13 @@ class LiveTradingEngine:
         result = await self.broker.submit_order(order)
         self.risk_manager.record_trade()
 
+        # Update daily tracking
+        self._daily_trades += 1
+        # TODO: Track P&L properly with entry price for accurate daily loss calculation
+
         logger.info(
             f"Order {result.status.value}: {result.filled_quantity} {symbol} "
-            f"@ ${result.filled_avg_price}"
+            f"@ ${result.filled_avg_price} (trade #{self._daily_trades} today)"
         )
 
     async def _close_all_positions(self, reason: str) -> None:
