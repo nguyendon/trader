@@ -142,17 +142,21 @@ class AlpacaDataFetcher(BaseDataFetcher):
         limit: int | None = None,
     ) -> list[Bar]:
         """Fetch bars from Alpaca."""
+        from alpaca.data.enums import DataFeed
         from alpaca.data.requests import StockBarsRequest
 
         if end is None:
             end = datetime.now()
 
+        # Use IEX feed for free tier (SIP requires paid subscription)
+        # IEX has slightly less coverage but works for most liquid stocks
         request = StockBarsRequest(
             symbol_or_symbols=symbol,
             timeframe=self._timeframe_to_alpaca(timeframe),
             start=start,
             end=end,
             limit=limit,
+            feed=DataFeed.IEX,
         )
 
         logger.debug(f"Fetching {symbol} bars from {start} to {end}")
