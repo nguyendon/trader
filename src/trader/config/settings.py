@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Default paths
+DEFAULT_DATA_DIR = Path.home() / ".trader"
 
 
 class Settings(BaseSettings):
@@ -34,12 +39,15 @@ class Settings(BaseSettings):
     stop_loss_pct: float = Field(default=0.05, ge=0, le=1)
     max_open_positions: int = Field(default=10, ge=1)
 
-    # Data settings
-    data_cache_dir: str = Field(default="data/cache")
-    database_url: str = Field(default="sqlite:///data/trader.db")
+    # Data/storage settings
+    data_dir: Path = Field(default=DEFAULT_DATA_DIR)
+    db_path: Path | None = Field(default=None)  # Defaults to data_dir/trader.db
 
-    # Logging
+    # Logging settings
     log_level: str = Field(default="INFO")
+    log_to_file: bool = Field(default=True)
+    log_dir: Path | None = Field(default=None)  # Defaults to data_dir/logs
+    log_retention_days: int = Field(default=30)
 
     @property
     def has_alpaca_credentials(self) -> bool:
@@ -58,8 +66,62 @@ class Settings(BaseSettings):
             return "https://paper-api.alpaca.markets"
         return "https://api.alpaca.markets"
 
+    @property
+    def database_path(self) -> Path:
+        """Get the database file path."""
+        if self.db_path:
+            return self.db_path
+        return self.data_dir / "trader.db"
+
+    @property
+    def logs_path(self) -> Path:
+        """Get the logs directory path."""
+        if self.log_dir:
+            return self.log_dir
+        return self.data_dir / "logs"
+
 
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def setup_logging(settings: Settings | None = None) -> None:
+    """Configure loguru for file and console logging.
+
+    Args:
+        settings: Optional settings instance. Uses default if not provided.
+    """
+    import sys
+
+    from loguru import logger
+
+    if settings is None:
+        settings = get_settings()
+
+    # Remove default handler
+    logger.remove()
+
+    # Add console handler
+    logger.add(
+        sys.stderr,
+        level=settings.log_level,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    )
+
+    # Add file handler if enabled
+    if settings.log_to_file:
+        log_path = settings.logs_path
+        log_path.mkdir(parents=True, exist_ok=True)
+
+        logger.add(
+            log_path / "trader_{time:YYYY-MM-DD}.log",
+            level=settings.log_level,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+            rotation="00:00",  # Rotate at midnight
+            retention=f"{settings.log_retention_days} days",
+            compression="gz",
+        )
+
+        logger.info(f"Logging to {log_path}")
