@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import typer
+from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
@@ -542,6 +543,204 @@ async def _run_paper_trading(
         await engine.stop()
 
 
+# Pre-defined screener filters for common momentum criteria
+SCREEN_PRESETS = {
+    "momentum": {
+        "description": "Stocks above SMA20 and SMA50 with volume",
+        "filters": {
+            "Average Volume": "Over 500K",
+            "Price": "Over $10",
+            "20-Day Simple Moving Average": "Price above SMA20",
+            "50-Day Simple Moving Average": "Price above SMA50",
+        },
+    },
+    "oversold": {
+        "description": "RSI oversold stocks (potential bounce)",
+        "filters": {
+            "Average Volume": "Over 500K",
+            "Price": "Over $10",
+            "RSI (14)": "Oversold (30)",
+        },
+    },
+    "overbought": {
+        "description": "RSI overbought stocks (potential reversal)",
+        "filters": {
+            "Average Volume": "Over 500K",
+            "Price": "Over $10",
+            "RSI (14)": "Overbought (70)",
+        },
+    },
+    "breakout": {
+        "description": "Stocks at new highs with volume",
+        "filters": {
+            "Average Volume": "Over 500K",
+            "Price": "Over $10",
+            "52-Week High/Low": "New High",
+            "Relative Volume": "Over 1.5",
+        },
+    },
+    "value": {
+        "description": "Undervalued stocks with strong fundamentals",
+        "filters": {
+            "Average Volume": "Over 500K",
+            "Price": "Over $10",
+            "P/E": "Under 15",
+            "PEG": "Under 1",
+        },
+    },
+}
+
+
+@app.command("screen")
+def screen_stocks(
+    preset: str = typer.Argument(
+        ...,
+        help="Screener preset: momentum, oversold, overbought, breakout, value",
+    ),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max stocks to return"),
+    scan_strategy: str | None = typer.Option(
+        None, "--scan", "-S", help="Run backtest scan with this strategy"
+    ),
+    scan_days: int = typer.Option(365, "--days", "-d", help="Days for backtest scan"),
+) -> None:
+    """
+    Screen stocks using Finviz filters and optionally backtest them.
+
+    Presets:
+      - momentum: Stocks above SMA20/SMA50 with volume
+      - oversold: RSI < 30 (potential bounce)
+      - overbought: RSI > 70 (potential reversal)
+      - breakout: New 52-week highs with volume surge
+      - value: Low P/E and PEG ratio
+
+    Examples:
+      trader screen momentum
+      trader screen oversold --limit 10
+      trader screen momentum --scan rsi --days 180
+    """
+    if preset.lower() not in SCREEN_PRESETS:
+        console.print(f"[red]Unknown preset: {preset}[/red]")
+        console.print(f"Available: {', '.join(SCREEN_PRESETS.keys())}")
+        raise typer.Exit(1)
+
+    preset_config = SCREEN_PRESETS[preset.lower()]
+    console.print(f"\n[bold blue]Stock Screener: {preset.upper()}[/bold blue]")
+    console.print(f"[dim]{preset_config['description']}[/dim]\n")
+
+    asyncio.run(
+        _run_screen(
+            filters=preset_config["filters"],
+            limit=limit,
+            scan_strategy=scan_strategy,
+            scan_days=scan_days,
+        )
+    )
+
+
+async def _run_screen(
+    filters: dict[str, str],
+    limit: int,
+    scan_strategy: str | None,
+    scan_days: int,
+) -> None:
+    """Run the stock screener and optionally backtest results."""
+    try:
+        from finvizfinance.screener.overview import Overview
+    except ImportError:
+        console.print("[red]finvizfinance not installed. Run: uv add finvizfinance[/red]")
+        raise typer.Exit(1) from None
+
+    with console.status("[bold green]Screening stocks (this may take a minute)..."):
+        foverview = Overview()
+        foverview.set_filter(filters_dict=filters)
+        df = foverview.screener_view()
+
+    if df is None or len(df) == 0:
+        console.print("[yellow]No stocks found matching criteria[/yellow]")
+        return
+
+    console.print(f"Found [green]{len(df)}[/green] stocks matching criteria\n")
+
+    # Sort by change (momentum) and limit
+    df_sorted = df.sort_values("Change", ascending=False)
+    df_limited = df_sorted.head(limit)
+
+    # Display screener results
+    table = Table(title=f"Top {limit} Screener Results", show_header=True, header_style="bold cyan")
+    table.add_column("Ticker", style="bold")
+    table.add_column("Price", justify="right")
+    table.add_column("Change", justify="right")
+    table.add_column("Volume", justify="right")
+    table.add_column("Sector")
+
+    for _, row in df_limited.iterrows():
+        change = row.get("Change", 0)
+        if change is None:
+            change = 0
+        if isinstance(change, str):
+            change = float(change.replace("%", "")) / 100 if "%" in change else float(change)
+
+        if change >= 0.05:
+            change_str = f"[green]+{change:.1%}[/green]"
+        elif change >= 0:
+            change_str = f"[dim]+{change:.1%}[/dim]"
+        else:
+            change_str = f"[red]{change:.1%}[/red]"
+
+        volume = row.get("Volume", 0)
+        if volume >= 1_000_000:
+            vol_str = f"{volume/1_000_000:.1f}M"
+        elif volume >= 1_000:
+            vol_str = f"{volume/1_000:.0f}K"
+        else:
+            vol_str = str(int(volume))
+
+        table.add_row(
+            row["Ticker"],
+            f"${row['Price']:.2f}",
+            change_str,
+            vol_str,
+            row.get("Sector", "N/A")[:15],
+        )
+
+    console.print(table)
+
+    # Get list of tickers
+    tickers = df_limited["Ticker"].tolist()
+    console.print(f"\n[dim]Tickers: {', '.join(tickers)}[/dim]")
+
+    # If scan strategy requested, run backtests
+    if scan_strategy:
+        console.print(f"\n[bold]Running {scan_strategy.upper()} backtest on screened stocks...[/bold]\n")
+        await _run_scan(
+            symbols=tickers,
+            strategy_name=scan_strategy,
+            days=scan_days,
+            sort_by="sharpe",
+        )
+
+
+@app.command("screen-list")
+def list_screen_presets() -> None:
+    """List available screener presets."""
+    console.print("\n[bold blue]Available Screener Presets[/bold blue]\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Preset", style="green")
+    table.add_column("Description")
+    table.add_column("Key Filters")
+
+    for name, config in SCREEN_PRESETS.items():
+        filters_str = ", ".join(list(config["filters"].keys())[:3])
+        if len(config["filters"]) > 3:
+            filters_str += "..."
+        table.add_row(name, config["description"], filters_str)
+
+    console.print(table)
+    console.print("\n[dim]Usage: trader screen <preset> [--limit N] [--scan STRATEGY][/dim]")
+    console.print("[dim]Example: trader screen momentum --scan rsi --days 180[/dim]\n")
+
+
 @app.command()
 def strategies() -> None:
     """List all available trading strategies."""
@@ -557,6 +756,243 @@ def strategies() -> None:
     console.print(table)
     console.print("\n[dim]Use --strategy/-S to select a strategy for backtesting[/dim]")
     console.print("[dim]Example: trader backtest AAPL --strategy rsi[/dim]\n")
+
+
+@app.command("intraday-scan")
+def intraday_scan(
+    symbols: str = typer.Argument(
+        ...,
+        help="Comma-separated symbols or group name (mag7, faang, tech, finance, healthcare)",
+    ),
+    hours: float = typer.Option(3.0, "--hours", "-H", help="Lookback period in hours"),
+    date: str | None = typer.Option(None, "--date", "-D", help="Date to scan (YYYY-MM-DD), default: today"),
+    start_time: str = typer.Option("09:30", "--start", help="Start time in ET (HH:MM)"),
+    end_time: str | None = typer.Option(None, "--end", help="End time in ET (HH:MM), default: start + hours"),
+    min_change: float = typer.Option(0.0, "--min-change", "-m", help="Minimum % change to show"),
+    sort_by: str = typer.Option("change", "--sort", help="Sort by: change, volume"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max results to show"),
+) -> None:
+    """
+    Scan stocks for intraday momentum.
+
+    Fetches intraday bars and calculates % change over the specified period.
+    Requires Alpaca API credentials.
+
+    Examples:
+      trader intraday-scan mag7 --hours 3
+      trader intraday-scan tech --date 2025-11-25 --hours 6
+      trader intraday-scan mag7 --date 2025-11-25 --start 09:30 --end 12:00
+      trader intraday-scan AAPL,MSFT --date 2025-11-25 --start 14:00 --hours 2
+    """
+    # Parse symbols
+    if symbols.lower() in STOCK_GROUPS:
+        symbol_list = STOCK_GROUPS[symbols.lower()]
+        console.print(f"\n[bold blue]Intraday Scan: {symbols.upper()}[/bold blue]")
+    else:
+        symbol_list = [s.strip().upper() for s in symbols.split(",")]
+        console.print(f"\n[bold blue]Intraday Scan: {len(symbol_list)} stocks[/bold blue]")
+
+    asyncio.run(
+        _run_intraday_scan(
+            symbols=symbol_list,
+            hours=hours,
+            scan_date=date,
+            start_time_str=start_time,
+            end_time_str=end_time,
+            min_change=min_change,
+            sort_by=sort_by,
+            limit=limit,
+        )
+    )
+
+
+async def _run_intraday_scan(
+    symbols: list[str],
+    hours: float,
+    scan_date: str | None,
+    start_time_str: str,
+    end_time_str: str | None,
+    min_change: float,
+    sort_by: str,
+    limit: int,
+) -> None:
+    """Run intraday momentum scan."""
+    from zoneinfo import ZoneInfo
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Intraday scanning requires Alpaca API credentials.[/red]")
+        console.print("[dim]Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env[/dim]")
+        raise typer.Exit(1)
+
+    fetcher = get_data_fetcher(settings)
+
+    # Use timezone-aware datetimes
+    utc = ZoneInfo("UTC")
+    et = ZoneInfo("America/New_York")
+
+    # Parse date
+    if scan_date:
+        try:
+            base_date = datetime.strptime(scan_date, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]Invalid date format: {scan_date}. Use YYYY-MM-DD[/red]")
+            raise typer.Exit(1) from None
+    else:
+        base_date = datetime.now()
+
+    # Parse start time
+    try:
+        start_hour, start_min = map(int, start_time_str.split(":"))
+    except ValueError:
+        console.print(f"[red]Invalid start time: {start_time_str}. Use HH:MM[/red]")
+        raise typer.Exit(1) from None
+
+    # Build start datetime in ET, then convert to UTC
+    start_et = datetime(
+        base_date.year, base_date.month, base_date.day,
+        start_hour, start_min, tzinfo=et
+    )
+
+    # Calculate end time
+    if end_time_str:
+        try:
+            end_hour, end_min = map(int, end_time_str.split(":"))
+            end_et = datetime(
+                base_date.year, base_date.month, base_date.day,
+                end_hour, end_min, tzinfo=et
+            )
+        except ValueError:
+            console.print(f"[red]Invalid end time: {end_time_str}. Use HH:MM[/red]")
+            raise typer.Exit(1) from None
+    else:
+        end_et = start_et + timedelta(hours=hours)
+
+    # Convert to UTC for API
+    start_time = start_et.astimezone(utc)
+    end_time = end_et.astimezone(utc)
+
+    console.print(f"Period: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET")
+    console.print(f"Min change: {min_change}%\n")
+
+    results: list[dict] = []
+
+    with console.status("[bold green]Fetching intraday data...") as status:
+        for symbol in symbols:
+            status.update(f"[bold green]Fetching {symbol}...")
+
+            try:
+                data = await fetcher.fetch_bars_df(
+                    symbol=symbol,
+                    timeframe=TimeFrame.MINUTE_5,  # 5-minute bars
+                    start=start_time,
+                    end=end_time,
+                )
+
+                if len(data) < 2:
+                    continue
+
+                # Calculate change
+                first_price = data["open"].iloc[0]
+                last_price = data["close"].iloc[-1]
+                change_pct = ((last_price - first_price) / first_price) * 100
+
+                # Calculate volume
+                total_volume = data["volume"].sum()
+
+                # Calculate high/low range
+                high = data["high"].max()
+                low = data["low"].min()
+                range_pct = ((high - low) / low) * 100
+
+                results.append({
+                    "symbol": symbol,
+                    "change_pct": change_pct,
+                    "first_price": first_price,
+                    "last_price": last_price,
+                    "volume": total_volume,
+                    "range_pct": range_pct,
+                    "bars": len(data),
+                })
+
+            except Exception as e:
+                logger.debug(f"Error fetching {symbol}: {e}")
+                continue
+
+    if not results:
+        console.print("[yellow]No data available. Market may be closed or holiday.[/yellow]")
+        console.print(f"[dim]Requested: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]")
+        console.print("[dim]US market hours: 9:30 AM - 4:00 PM ET, Mon-Fri[/dim]")
+        return
+
+    # Filter by minimum change
+    if min_change > 0:
+        results = [r for r in results if abs(r["change_pct"]) >= min_change]
+
+    if not results:
+        console.print(f"[yellow]No stocks with >= {min_change}% change[/yellow]")
+        return
+
+    # Sort results
+    if sort_by == "volume":
+        results.sort(key=lambda x: x["volume"], reverse=True)
+    else:  # change (default)
+        results.sort(key=lambda x: x["change_pct"], reverse=True)
+
+    # Limit results
+    results = results[:limit]
+
+    # Display results
+    table = Table(
+        title=f"Intraday Movers ({hours}h lookback)",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("Symbol", style="bold")
+    table.add_column("Change", justify="right")
+    table.add_column("Price", justify="right")
+    table.add_column("Range", justify="right")
+    table.add_column("Volume", justify="right")
+
+    for r in results:
+        # Color code change
+        change = r["change_pct"]
+        if change >= 2.0:
+            change_str = f"[green bold]+{change:.2f}%[/green bold]"
+        elif change >= 0:
+            change_str = f"[green]+{change:.2f}%[/green]"
+        elif change >= -2.0:
+            change_str = f"[red]{change:.2f}%[/red]"
+        else:
+            change_str = f"[red bold]{change:.2f}%[/red bold]"
+
+        # Format volume
+        vol = r["volume"]
+        if vol >= 1_000_000:
+            vol_str = f"{vol/1_000_000:.1f}M"
+        elif vol >= 1_000:
+            vol_str = f"{vol/1_000:.0f}K"
+        else:
+            vol_str = str(int(vol))
+
+        table.add_row(
+            r["symbol"],
+            change_str,
+            f"${r['last_price']:.2f}",
+            f"{r['range_pct']:.1f}%",
+            vol_str,
+        )
+
+    console.print(table)
+
+    # Summary
+    gainers = sum(1 for r in results if r["change_pct"] > 0)
+    losers = len(results) - gainers
+    avg_change = sum(r["change_pct"] for r in results) / len(results)
+
+    console.print(f"\n[dim]Gainers: {gainers} | Losers: {losers} | Avg: {avg_change:+.2f}%[/dim]")
+    console.print(f"[dim]Data from {start_et.strftime('%H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]\n")
 
 
 @app.command()
