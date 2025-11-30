@@ -10,10 +10,11 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
-from trader.config.settings import get_settings
+from trader.config.settings import get_settings, setup_logging
 from trader.core.models import TimeFrame
 from trader.data.fetcher import get_data_fetcher
 from trader.engine.backtest import BacktestEngine, BacktestResult
+from trader.storage import get_trade_store
 from trader.strategies.registry import get_strategy, list_strategies
 
 app = typer.Typer(
@@ -22,6 +23,13 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+@app.callback()
+def main_callback() -> None:
+    """Initialize logging on startup."""
+    settings = get_settings()
+    setup_logging(settings)
 
 
 # Common stock groups for quick testing
@@ -43,6 +51,7 @@ def backtest(
     slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA/MACD period"),
     capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
     commission: float = typer.Option(0.0, "--commission", help="Commission per trade"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save results to database"),
 ) -> None:
     """Run a backtest with a trading strategy."""
     asyncio.run(
@@ -54,6 +63,7 @@ def backtest(
             slow_period=slow_period,
             capital=capital,
             commission=commission,
+            save_results=save,
         )
     )
 
@@ -253,6 +263,7 @@ async def _run_backtest(
     slow_period: int,
     capital: float,
     commission: float,
+    save_results: bool = True,
 ) -> None:
     """Async implementation of backtest command."""
     settings = get_settings()
@@ -318,6 +329,12 @@ async def _run_backtest(
             data=data,
             symbol=symbol,
         )
+
+    # Save to database
+    if save_results:
+        store = get_trade_store(settings.database_path)
+        run_id = store.save_backtest(result)
+        console.print(f"[dim]Saved to database: {run_id}[/dim]")
 
     # Display results
     _print_results(result)
@@ -756,6 +773,179 @@ def strategies() -> None:
     console.print(table)
     console.print("\n[dim]Use --strategy/-S to select a strategy for backtesting[/dim]")
     console.print("[dim]Example: trader backtest AAPL --strategy rsi[/dim]\n")
+
+
+@app.command("runs")
+def list_runs(
+    strategy: str | None = typer.Option(None, "--strategy", "-S", help="Filter by strategy"),
+    symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Number of runs to show"),
+) -> None:
+    """List recent backtest runs from database."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    runs = store.get_backtest_runs(strategy=strategy, symbol=symbol, limit=limit)
+
+    if not runs:
+        console.print("[yellow]No backtest runs found.[/yellow]")
+        console.print("[dim]Run a backtest first: trader backtest AAPL[/dim]")
+        return
+
+    console.print(f"\n[bold blue]Recent Backtest Runs[/bold blue] ({len(runs)} results)\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Run ID", style="dim")
+    table.add_column("Strategy")
+    table.add_column("Symbol")
+    table.add_column("Return", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Trades", justify="right")
+    table.add_column("Win Rate", justify="right")
+    table.add_column("Date")
+
+    for run in runs:
+        ret = run["total_return_pct"]
+        if ret >= 10:
+            ret_str = f"[green]+{ret:.1f}%[/green]"
+        elif ret >= 0:
+            ret_str = f"+{ret:.1f}%"
+        else:
+            ret_str = f"[red]{ret:.1f}%[/red]"
+
+        sharpe = run["sharpe_ratio"]
+        if sharpe >= 1.0:
+            sharpe_str = f"[green]{sharpe:.2f}[/green]"
+        elif sharpe >= 0:
+            sharpe_str = f"{sharpe:.2f}"
+        else:
+            sharpe_str = f"[red]{sharpe:.2f}[/red]"
+
+        # Truncate run_id for display
+        run_id_short = run["run_id"][:25] + "..." if len(run["run_id"]) > 28 else run["run_id"]
+
+        table.add_row(
+            run_id_short,
+            run["strategy_name"],
+            run["symbol"],
+            ret_str,
+            sharpe_str,
+            str(run["num_trades"]),
+            f"{run['win_rate']:.0f}%",
+            run["created_at"][:10],
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Database: {settings.database_path}[/dim]\n")
+
+
+@app.command("trades")
+def list_trades(
+    run_id: str | None = typer.Option(None, "--run", "-r", help="Filter by run ID"),
+    symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Number of trades to show"),
+) -> None:
+    """List trades from database."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    trades = store.get_trades(run_id=run_id, symbol=symbol, limit=limit)
+
+    if not trades:
+        console.print("[yellow]No trades found.[/yellow]")
+        return
+
+    console.print(f"\n[bold blue]Trade History[/bold blue] ({len(trades)} results)\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Entry")
+    table.add_column("Exit")
+    table.add_column("Qty", justify="right")
+    table.add_column("Entry $", justify="right")
+    table.add_column("Exit $", justify="right")
+    table.add_column("P&L", justify="right")
+    table.add_column("P&L %", justify="right")
+
+    for trade in trades:
+        pnl = trade["pnl"]
+        pnl_pct = trade["pnl_pct"] * 100
+
+        if pnl >= 0:
+            pnl_str = f"[green]+${pnl:,.2f}[/green]"
+            pnl_pct_str = f"[green]+{pnl_pct:.1f}%[/green]"
+        else:
+            pnl_str = f"[red]-${abs(pnl):,.2f}[/red]"
+            pnl_pct_str = f"[red]{pnl_pct:.1f}%[/red]"
+
+        table.add_row(
+            trade["symbol"],
+            trade["entry_time"][:10],
+            trade["exit_time"][:10],
+            str(trade["quantity"]),
+            f"${trade['entry_price']:,.2f}",
+            f"${trade['exit_price']:,.2f}",
+            pnl_str,
+            pnl_pct_str,
+        )
+
+    console.print(table)
+
+    # Show aggregate stats
+    stats = store.get_trade_stats(symbol=symbol)
+    if stats["total_trades"] > 0:
+        console.print("\n[bold]Aggregate Stats:[/bold]")
+        console.print(f"  Total trades: {stats['total_trades']}")
+        console.print(f"  Win rate: {stats['win_rate']:.1f}%")
+        console.print(f"  Total P&L: ${stats['total_pnl']:,.2f}")
+        console.print(f"  Avg P&L: ${stats['avg_pnl']:,.2f} ({stats['avg_pnl_pct']:.1f}%)")
+        console.print(f"  Best trade: ${stats['best_trade']:,.2f}")
+        console.print(f"  Worst trade: ${stats['worst_trade']:,.2f}")
+
+    console.print()
+
+
+@app.command("stats")
+def show_stats(
+    symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
+) -> None:
+    """Show aggregate trading statistics."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    stats = store.get_trade_stats(symbol=symbol)
+
+    if stats["total_trades"] == 0:
+        console.print("[yellow]No trades found.[/yellow]")
+        return
+
+    title = f"Trading Stats: {symbol}" if symbol else "Trading Stats: All Symbols"
+    console.print(f"\n[bold blue]{title}[/bold blue]\n")
+
+    table = Table(show_header=False)
+    table.add_column("Metric", style="dim")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Total Trades", str(stats["total_trades"]))
+    table.add_row("Winning Trades", str(stats["winning_trades"]))
+    table.add_row("Losing Trades", str(stats["losing_trades"]))
+    table.add_row("Win Rate", f"{stats['win_rate']:.1f}%")
+    table.add_row("", "")
+
+    total_pnl = stats["total_pnl"]
+    if total_pnl >= 0:
+        table.add_row("Total P&L", f"[green]+${total_pnl:,.2f}[/green]")
+    else:
+        table.add_row("Total P&L", f"[red]-${abs(total_pnl):,.2f}[/red]")
+
+    table.add_row("Avg P&L per Trade", f"${stats['avg_pnl']:,.2f}")
+    table.add_row("Avg Return", f"{stats['avg_pnl_pct']:.2f}%")
+    table.add_row("", "")
+    table.add_row("Best Trade", f"[green]+${stats['best_trade']:,.2f}[/green]")
+    table.add_row("Worst Trade", f"[red]${stats['worst_trade']:,.2f}[/red]")
+
+    console.print(table)
+    console.print(f"\n[dim]Database: {settings.database_path}[/dim]\n")
 
 
 @app.command("intraday-scan")
