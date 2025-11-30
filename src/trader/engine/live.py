@@ -18,6 +18,7 @@ from trader.core.models import Order, OrderSide, OrderType, Signal, SignalAction
 if TYPE_CHECKING:
     from trader.broker.base import BaseBroker
     from trader.data.fetcher import BaseDataFetcher
+    from trader.notifications.discord import DiscordNotifier
     from trader.risk.manager import RiskManager
     from trader.strategies.base import BaseStrategy
 
@@ -102,6 +103,7 @@ class LiveTradingEngine:
         risk_manager: RiskManager,
         config: EngineConfig | None = None,
         on_signal: Callable[[Signal, str, int], bool] | None = None,
+        notifier: DiscordNotifier | None = None,
     ) -> None:
         """Initialize the trading engine.
 
@@ -113,6 +115,7 @@ class LiveTradingEngine:
             config: Engine configuration
             on_signal: Optional callback for signal confirmation.
                        Called with (signal, symbol, quantity). Return True to execute.
+            notifier: Optional Discord notifier for trade alerts
         """
         self.broker = broker
         self.data_fetcher = data_fetcher
@@ -120,6 +123,7 @@ class LiveTradingEngine:
         self.risk_manager = risk_manager
         self.config = config or EngineConfig()
         self.on_signal = on_signal
+        self.notifier = notifier
 
         self.state = EngineState.STOPPED
         self._stop_event = asyncio.Event()
@@ -169,6 +173,15 @@ class LiveTradingEngine:
                 f"Account value: ${account_value:,.2f}"
             )
 
+            # Send startup notification
+            if self.notifier:
+                await self.notifier.notify_engine_started(
+                    symbols=self.config.symbols,
+                    strategy=self.strategy.name,
+                    account_value=float(account_value),
+                    is_paper=self.broker.is_paper,
+                )
+
             # Reset daily counters
             self.risk_manager.reset_daily_counters(float(account_value))
             self._reset_daily_counters()
@@ -178,9 +191,19 @@ class LiveTradingEngine:
                 self._check_daily_reset()
 
                 # Check circuit breakers
-                if self._check_circuit_breakers():
-                    logger.warning("Circuit breaker triggered - pausing trading")
+                breaker_reason = self._check_circuit_breakers()
+                if breaker_reason:
+                    logger.warning(f"Circuit breaker triggered - {breaker_reason}")
                     self.state = EngineState.PAUSED
+
+                    # Send notification
+                    if self.notifier:
+                        await self.notifier.notify_circuit_breaker(
+                            reason=breaker_reason,
+                            daily_trades=self._daily_trades,
+                            daily_pnl=float(self._daily_pnl),
+                        )
+
                     # Still run loop but don't trade
                     await asyncio.sleep(self.config.check_interval_seconds)
                     continue
@@ -198,6 +221,14 @@ class LiveTradingEngine:
         except Exception as e:
             self.state = EngineState.ERROR
             logger.exception(f"Engine error: {e}")
+
+            # Send error notification
+            if self.notifier:
+                await self.notifier.notify_error(
+                    error=str(e),
+                    context=f"Engine crashed after {self._daily_trades} trades",
+                )
+
             raise
         finally:
             await self._shutdown()
@@ -215,21 +246,23 @@ class LiveTradingEngine:
         if self._last_reset_date != today:
             self._reset_daily_counters()
 
-    def _check_circuit_breakers(self) -> bool:
-        """Check if any circuit breakers are triggered. Returns True if trading should stop."""
+    def _check_circuit_breakers(self) -> str | None:
+        """Check if any circuit breakers are triggered.
+
+        Returns:
+            Reason string if triggered, None otherwise
+        """
         safety = self.config.safety
 
         # Check max trades per day
         if self._daily_trades >= safety.max_trades_per_day:
-            logger.warning(f"Max trades reached: {self._daily_trades}/{safety.max_trades_per_day}")
-            return True
+            return f"Max trades reached: {self._daily_trades}/{safety.max_trades_per_day}"
 
         # Check daily loss limit
         if float(self._daily_pnl) <= -safety.max_loss_per_day:
-            logger.warning(f"Daily loss limit reached: ${self._daily_pnl:,.2f}")
-            return True
+            return f"Daily loss limit reached: ${self._daily_pnl:,.2f}"
 
-        return False
+        return None
 
     async def _check_position_limits(self, symbol: str, quantity: int, price: Decimal) -> tuple[bool, str]:
         """Check if a trade would exceed position limits. Returns (ok, reason)."""
@@ -390,6 +423,10 @@ class LiveTradingEngine:
             f"@ ${result.filled_avg_price} (trade #{self._daily_trades} today)"
         )
 
+        # Send trade notification
+        if self.notifier:
+            await self.notifier.notify_order_filled(result)
+
     async def _close_all_positions(self, reason: str) -> None:
         """Close all open positions."""
         positions = await self.broker.get_positions()
@@ -446,6 +483,15 @@ class LiveTradingEngine:
         # Close positions if in day trading mode
         if self.config.trading_mode == TradingMode.DAY:
             await self._close_all_positions("Engine shutdown")
+
+        # Send shutdown notification
+        if self.notifier:
+            await self.notifier.notify_engine_stopped(
+                reason="Manual shutdown",
+                daily_trades=self._daily_trades,
+                daily_pnl=float(self._daily_pnl),
+            )
+            await self.notifier.close()
 
         await self.broker.disconnect()
         self.state = EngineState.STOPPED

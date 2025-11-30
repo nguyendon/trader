@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     log_dir: Path | None = Field(default=None)  # Defaults to data_dir/logs
     log_retention_days: int = Field(default=30)
 
+    # Notification settings
+    discord_webhook_url: str | None = Field(default=None)
+    notify_on_trade: bool = Field(default=True)
+    notify_on_error: bool = Field(default=True)
+    notify_daily_summary: bool = Field(default=True)
+
     @property
     def has_alpaca_credentials(self) -> bool:
         """Check if Alpaca credentials are configured."""
