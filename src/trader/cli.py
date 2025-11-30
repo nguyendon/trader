@@ -1185,6 +1185,296 @@ async def _run_intraday_scan(
     console.print(f"[dim]Data from {start_et.strftime('%H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]\n")
 
 
+@app.command("live")
+def live_trading(
+    symbols: str = typer.Argument(
+        "AAPL", help="Comma-separated symbols to trade (e.g., AAPL,MSFT)"
+    ),
+    strategy: str = typer.Option("sma", "--strategy", "-S", help="Strategy to use"),
+    interval: int = typer.Option(
+        60, "--interval", "-i", help="Check interval in seconds"
+    ),
+    day_trade: bool = typer.Option(False, "--day-trade", help="Close positions at EOD"),
+    max_position: float = typer.Option(
+        10000.0, "--max-position", help="Max $ per position"
+    ),
+    max_portfolio: float = typer.Option(
+        50000.0, "--max-portfolio", help="Max $ total in positions"
+    ),
+    max_daily_loss: float = typer.Option(
+        500.0, "--max-daily-loss", help="Stop trading if daily loss exceeds"
+    ),
+    max_trades: int = typer.Option(
+        20, "--max-trades", help="Max trades per day"
+    ),
+    confirm: bool = typer.Option(
+        True, "--confirm/--no-confirm", help="Require confirmation for each trade"
+    ),
+) -> None:
+    """
+    Run live trading with Alpaca (paper or live).
+
+    Connects to Alpaca API and executes trades based on strategy signals.
+    Uses ALPACA_PAPER=true by default (paper trading).
+
+    Safety features:
+      - Position size limits
+      - Portfolio value limits
+      - Daily loss limits
+      - Max trades per day
+      - Optional trade confirmation
+
+    Examples:
+      trader live AAPL --strategy sma
+      trader live AAPL,MSFT --interval 300 --day-trade
+      trader live NVDA --max-position 5000 --no-confirm
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",")]
+    asyncio.run(
+        _run_live_trading(
+            symbols=symbol_list,
+            strategy_name=strategy,
+            interval=interval,
+            day_trade=day_trade,
+            max_position=max_position,
+            max_portfolio=max_portfolio,
+            max_daily_loss=max_daily_loss,
+            max_trades=max_trades,
+            confirm=confirm,
+        )
+    )
+
+
+async def _run_live_trading(
+    symbols: list[str],
+    strategy_name: str,
+    interval: int,
+    day_trade: bool,
+    max_position: float,
+    max_portfolio: float,
+    max_daily_loss: float,
+    max_trades: int,
+    confirm: bool,
+) -> None:
+    """Run live trading with Alpaca broker."""
+    from trader.broker.alpaca import AlpacaBroker
+    from trader.data.fetcher import AlpacaDataFetcher
+    from trader.engine.live import EngineConfig, LiveTradingEngine, SafetyLimits, TradingMode
+    from trader.risk.manager import RiskConfig, RiskManager
+
+    settings = get_settings()
+
+    # Check for Alpaca credentials
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required for live trading.[/red]")
+        console.print("\nSet environment variables or create .env file:")
+        console.print("  ALPACA_API_KEY=your_key")
+        console.print("  ALPACA_SECRET_KEY=your_secret")
+        console.print("  ALPACA_PAPER=true  # for paper trading")
+        raise typer.Exit(1)
+
+    # Create strategy
+    try:
+        strat = get_strategy(strategy_name)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    mode = "paper" if settings.alpaca_paper else "LIVE"
+    console.print(f"\n[bold blue]Trader Live Trading ({mode})[/bold blue]")
+    console.print(f"Symbols: {', '.join(symbols)}")
+    console.print(f"Strategy: {strat.description}")
+    console.print(f"Check Interval: {interval}s")
+    console.print(f"Mode: {'Day Trading' if day_trade else 'Swing Trading'}")
+
+    console.print("\n[bold]Safety Limits:[/bold]")
+    console.print(f"  Max per position: ${max_position:,.0f}")
+    console.print(f"  Max portfolio: ${max_portfolio:,.0f}")
+    console.print(f"  Max daily loss: ${max_daily_loss:,.0f}")
+    console.print(f"  Max trades/day: {max_trades}")
+    console.print(f"  Confirmation: {'Required' if confirm else 'Auto'}")
+
+    if not settings.alpaca_paper:
+        console.print("\n[red bold]⚠️  WARNING: LIVE TRADING MODE[/red bold]")
+        console.print("[red]Real money will be used for trades![/red]")
+        if not typer.confirm("Are you sure you want to continue?"):
+            console.print("Aborted.")
+            raise typer.Exit(0)
+
+    console.print("\n[dim]Press Ctrl+C to stop[/dim]\n")
+
+    # Confirmation callback
+    from trader.core.models import Signal
+
+    def on_signal(signal: Signal, symbol: str, quantity: int) -> bool:
+        """Prompt for trade confirmation."""
+        console.print("\n[yellow]Trade Signal:[/yellow]")
+        console.print(f"  Action: {signal.action.value.upper()}")
+        console.print(f"  Symbol: {symbol}")
+        console.print(f"  Quantity: {quantity}")
+        console.print(f"  Reason: {signal.reason}")
+        return typer.confirm("Execute this trade?")
+
+    # Create components
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    data_fetcher = AlpacaDataFetcher(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+    )
+
+    risk_manager = RiskManager(
+        RiskConfig(
+            max_position_size_pct=0.20,
+            max_open_positions=len(symbols),
+        )
+    )
+
+    safety = SafetyLimits(
+        max_position_value=max_position,
+        max_portfolio_value=max_portfolio,
+        max_loss_per_day=max_daily_loss,
+        max_trades_per_day=max_trades,
+        require_confirmation=confirm,
+    )
+
+    config = EngineConfig(
+        symbols=symbols,
+        trading_mode=TradingMode.DAY if day_trade else TradingMode.SWING,
+        check_interval_seconds=interval,
+        safety=safety,
+    )
+
+    engine = LiveTradingEngine(
+        broker=broker,
+        data_fetcher=data_fetcher,
+        strategy=strat,
+        risk_manager=risk_manager,
+        config=config,
+        on_signal=on_signal if confirm else None,
+    )
+
+    try:
+        console.print("[green]Starting live trading engine...[/green]")
+        await engine.run()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping...[/yellow]")
+        await engine.stop()
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        logger.exception("Live trading error")
+        raise typer.Exit(1) from None
+
+    console.print("[green]Trading engine stopped.[/green]")
+
+
+@app.command("status")
+def trading_status() -> None:
+    """Show current trading status and positions (requires Alpaca)."""
+    asyncio.run(_show_trading_status())
+
+
+async def _show_trading_status() -> None:
+    """Show trading status from Alpaca."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    try:
+        await broker.connect()
+
+        mode = "Paper" if settings.alpaca_paper else "Live"
+        console.print(f"\n[bold blue]Trading Status ({mode})[/bold blue]\n")
+
+        # Account info
+        account_value = await broker.get_account_value()
+        buying_power = await broker.get_buying_power()
+        cash = await broker.get_cash()
+
+        console.print("[bold]Account:[/bold]")
+        console.print(f"  Equity: ${account_value:,.2f}")
+        console.print(f"  Cash: ${cash:,.2f}")
+        console.print(f"  Buying Power: ${buying_power:,.2f}")
+
+        # Positions
+        positions = await broker.get_positions()
+
+        if positions:
+            console.print(f"\n[bold]Positions ({len(positions)}):[/bold]")
+
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Symbol", style="bold")
+            table.add_column("Qty", justify="right")
+            table.add_column("Avg Entry", justify="right")
+            table.add_column("Current", justify="right")
+            table.add_column("Value", justify="right")
+            table.add_column("P&L", justify="right")
+            table.add_column("P&L %", justify="right")
+
+            total_pnl = 0
+            for pos in positions:
+                pnl = float(pos.unrealized_pnl or 0)
+                total_pnl += pnl
+                pnl_pct = pos.unrealized_pnl_pct * 100 if pos.unrealized_pnl_pct else 0
+
+                if pnl >= 0:
+                    pnl_str = f"[green]+${pnl:,.2f}[/green]"
+                    pnl_pct_str = f"[green]+{pnl_pct:.1f}%[/green]"
+                else:
+                    pnl_str = f"[red]-${abs(pnl):,.2f}[/red]"
+                    pnl_pct_str = f"[red]{pnl_pct:.1f}%[/red]"
+
+                table.add_row(
+                    pos.symbol,
+                    str(pos.quantity),
+                    f"${float(pos.avg_entry_price):,.2f}",
+                    f"${float(pos.current_price or 0):,.2f}",
+                    f"${float(pos.market_value or 0):,.2f}",
+                    pnl_str,
+                    pnl_pct_str,
+                )
+
+            console.print(table)
+
+            if total_pnl >= 0:
+                console.print(f"\n[bold]Total Unrealized P&L: [green]+${total_pnl:,.2f}[/green][/bold]")
+            else:
+                console.print(f"\n[bold]Total Unrealized P&L: [red]-${abs(total_pnl):,.2f}[/red][/bold]")
+        else:
+            console.print("\n[dim]No open positions[/dim]")
+
+        # Open orders
+        open_orders = await broker.get_open_orders()
+        if open_orders:
+            console.print(f"\n[bold]Open Orders ({len(open_orders)}):[/bold]")
+            for order in open_orders:
+                console.print(
+                    f"  {order.side.value.upper()} {order.quantity} {order.symbol} "
+                    f"@ {order.order_type.value} ({order.status.value})"
+                )
+
+        await broker.disconnect()
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]Error connecting to Alpaca: {e}[/red]")
+        raise typer.Exit(1) from None
+
+
 @app.command()
 def version() -> None:
     """Show version information."""
@@ -1217,7 +1507,7 @@ def show_config(
 
     config = load_config()
 
-    console.print(f"\n[bold blue]Trading Configuration[/bold blue]")
+    console.print("\n[bold blue]Trading Configuration[/bold blue]")
     console.print(f"[dim]File: {DEFAULT_CONFIG_PATH}[/dim]\n")
 
     # Strategies
@@ -1386,6 +1676,249 @@ async def _run_config_backtest(
 
     avg_return = sum(r["return_pct"] for r in results) / len(results)
     console.print(f"\n[dim]Avg return: {avg_return:+.1f}% across {len(results)} symbols[/dim]\n")
+
+
+@app.command("report")
+def performance_report(
+    days: int = typer.Option(30, "--days", "-d", help="Number of days to include"),
+    live: bool = typer.Option(False, "--live", "-L", help="Show live trades only"),
+) -> None:
+    """Show performance report with P&L summary."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    console.print(f"\n[bold blue]Performance Report ({days} days)[/bold blue]\n")
+
+    if live:
+        # Live trading stats
+        stats = store.get_live_trade_stats(days=days)
+        source = "Live Trading"
+    else:
+        # Backtest stats
+        stats = store.get_trade_stats()
+        source = "Backtest"
+
+    if stats["total_trades"] == 0:
+        console.print(f"[yellow]No {source.lower()} trades found.[/yellow]")
+        console.print("[dim]Run some backtests or live trades first.[/dim]")
+        return
+
+    # Summary table
+    table = Table(title=f"{source} Performance", show_header=False)
+    table.add_column("Metric", style="dim")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Total Trades", str(stats["total_trades"]))
+    table.add_row("Winning Trades", str(stats["winning_trades"]))
+    table.add_row("Losing Trades", str(stats["losing_trades"]))
+
+    win_rate = stats["win_rate"]
+    if win_rate >= 50:
+        table.add_row("Win Rate", f"[green]{win_rate:.1f}%[/green]")
+    else:
+        table.add_row("Win Rate", f"[red]{win_rate:.1f}%[/red]")
+
+    table.add_row("", "")
+
+    total_pnl = stats["total_pnl"]
+    if total_pnl >= 0:
+        table.add_row("Total P&L", f"[green]+${total_pnl:,.2f}[/green]")
+    else:
+        table.add_row("Total P&L", f"[red]-${abs(total_pnl):,.2f}[/red]")
+
+    table.add_row("Avg P&L/Trade", f"${stats['avg_pnl']:,.2f}")
+    table.add_row("Avg Return", f"{stats['avg_pnl_pct']:.2f}%")
+
+    table.add_row("", "")
+    table.add_row("Best Trade", f"[green]+${stats['best_trade']:,.2f}[/green]")
+    table.add_row("Worst Trade", f"[red]${stats['worst_trade']:,.2f}[/red]")
+
+    if "profit_factor" in stats and stats["profit_factor"] > 0:
+        pf = stats["profit_factor"]
+        if pf >= 1.5:
+            table.add_row("Profit Factor", f"[green]{pf:.2f}[/green]")
+        elif pf >= 1.0:
+            table.add_row("Profit Factor", f"{pf:.2f}")
+        else:
+            table.add_row("Profit Factor", f"[red]{pf:.2f}[/red]")
+
+    console.print(table)
+
+    # Daily P&L report if available
+    report = store.get_performance_report(days)
+    if report["trading_days"] > 0:
+        console.print("\n[bold]Daily Summary:[/bold]")
+        console.print(f"  Trading Days: {report['trading_days']}")
+        console.print(f"  Win Days: {report['win_days']} ({report['win_rate']:.0f}%)")
+        console.print(f"  Avg Daily P&L: ${report['avg_daily_pnl']:,.2f}")
+        console.print(f"  Best Day: ${report['best_day']:,.2f}")
+        console.print(f"  Worst Day: ${report['worst_day']:,.2f}")
+
+    console.print()
+
+
+@app.command("export")
+def export_trades(
+    output: str = typer.Argument("trades.csv", help="Output file path"),
+    source: str = typer.Option(
+        "all", "--source", "-s", help="Source: 'backtest', 'live', or 'all'"
+    ),
+    symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
+    days: int | None = typer.Option(None, "--days", "-d", help="Filter to last N days"),
+    daily: bool = typer.Option(False, "--daily", help="Export daily P&L instead"),
+) -> None:
+    """Export trades or daily P&L to CSV file."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    if daily:
+        count = store.export_daily_pnl_csv(output, days or 365)
+        if count > 0:
+            console.print(f"[green]Exported {count} daily P&L records to {output}[/green]")
+        else:
+            console.print("[yellow]No records to export[/yellow]")
+    else:
+        count = store.export_trades_csv(output, source, symbol, days)
+        if count > 0:
+            console.print(f"[green]Exported {count} trades to {output}[/green]")
+        else:
+            console.print("[yellow]No trades to export[/yellow]")
+
+
+@app.command("pnl")
+def show_pnl(
+    days: int = typer.Option(7, "--days", "-d", help="Number of days to show"),
+) -> None:
+    """Show daily P&L history."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    records = store.get_daily_pnl(days)
+
+    if not records:
+        console.print("[yellow]No daily P&L records found.[/yellow]")
+        console.print("[dim]P&L is recorded during live trading sessions.[/dim]")
+        return
+
+    console.print(f"\n[bold blue]Daily P&L (Last {days} Days)[/bold blue]\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Date")
+    table.add_column("Start Equity", justify="right")
+    table.add_column("End Equity", justify="right")
+    table.add_column("Daily P&L", justify="right")
+    table.add_column("Return", justify="right")
+    table.add_column("Trades", justify="right")
+    table.add_column("W/L", justify="right")
+
+    total_pnl = 0
+    for record in records:
+        daily_pnl = record["ending_equity"] - record["starting_equity"]
+        total_pnl += daily_pnl
+        daily_return = (daily_pnl / record["starting_equity"]) * 100
+
+        if daily_pnl >= 0:
+            pnl_str = f"[green]+${daily_pnl:,.2f}[/green]"
+            ret_str = f"[green]+{daily_return:.2f}%[/green]"
+        else:
+            pnl_str = f"[red]-${abs(daily_pnl):,.2f}[/red]"
+            ret_str = f"[red]{daily_return:.2f}%[/red]"
+
+        table.add_row(
+            record["date"],
+            f"${record['starting_equity']:,.2f}",
+            f"${record['ending_equity']:,.2f}",
+            pnl_str,
+            ret_str,
+            str(record["num_trades"]),
+            f"{record['winning_trades']}/{record['losing_trades']}",
+        )
+
+    console.print(table)
+
+    if total_pnl >= 0:
+        console.print(f"\n[bold]Total P&L: [green]+${total_pnl:,.2f}[/green][/bold]")
+    else:
+        console.print(f"\n[bold]Total P&L: [red]-${abs(total_pnl):,.2f}[/red][/bold]")
+
+    console.print()
+
+
+@app.command("live-trades")
+def list_live_trades(
+    symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
+    status: str = typer.Option("all", "--status", "-s", help="Filter: open, closed, all"),
+    days: int | None = typer.Option(None, "--days", "-d", help="Filter to last N days"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max trades to show"),
+) -> None:
+    """List live/paper trading history."""
+    settings = get_settings()
+    store = get_trade_store(settings.database_path)
+
+    status_filter = None if status == "all" else status
+    trades = store.get_live_trades(
+        symbol=symbol, status=status_filter, days=days, limit=limit
+    )
+
+    if not trades:
+        console.print("[yellow]No live trades found.[/yellow]")
+        console.print("[dim]Run 'trader live' to start paper trading.[/dim]")
+        return
+
+    console.print(f"\n[bold blue]Live Trades[/bold blue] ({len(trades)} results)\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="dim")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Side")
+    table.add_column("Qty", justify="right")
+    table.add_column("Entry", justify="right")
+    table.add_column("Exit", justify="right")
+    table.add_column("P&L", justify="right")
+    table.add_column("Status")
+
+    for trade in trades:
+        entry_str = f"${trade['entry_price']:,.2f}"
+
+        if trade["status"] == "open":
+            exit_str = "[dim]-[/dim]"
+            pnl_str = "[dim]-[/dim]"
+            status_str = "[yellow]Open[/yellow]"
+        else:
+            exit_str = f"${trade['exit_price']:,.2f}"
+            pnl = trade["pnl"]
+            if pnl >= 0:
+                pnl_str = f"[green]+${pnl:,.2f}[/green]"
+            else:
+                pnl_str = f"[red]-${abs(pnl):,.2f}[/red]"
+            status_str = "[green]Closed[/green]"
+
+        table.add_row(
+            str(trade["id"]),
+            trade["symbol"],
+            trade["side"].upper(),
+            str(trade["quantity"]),
+            entry_str,
+            exit_str,
+            pnl_str,
+            status_str,
+        )
+
+    console.print(table)
+
+    # Show stats for closed trades
+    stats = store.get_live_trade_stats(symbol=symbol, days=days)
+    if stats["total_trades"] > 0:
+        console.print("\n[bold]Closed Trade Stats:[/bold]")
+        console.print(f"  Total: {stats['total_trades']} trades")
+        console.print(f"  Win Rate: {stats['win_rate']:.1f}%")
+        total_pnl = stats["total_pnl"]
+        if total_pnl >= 0:
+            console.print(f"  Total P&L: [green]+${total_pnl:,.2f}[/green]")
+        else:
+            console.print(f"  Total P&L: [red]-${abs(total_pnl):,.2f}[/red]")
+
+    console.print()
 
 
 if __name__ == "__main__":
