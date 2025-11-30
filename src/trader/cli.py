@@ -1349,6 +1349,13 @@ async def _run_live_trading(
         safety=safety,
     )
 
+    # Setup Discord notifications if configured
+    notifier = None
+    if settings.discord_webhook_url:
+        from trader.notifications import DiscordNotifier
+        notifier = DiscordNotifier(settings.discord_webhook_url)
+        console.print("[dim]Discord notifications enabled[/dim]")
+
     engine = LiveTradingEngine(
         broker=broker,
         data_fetcher=data_fetcher,
@@ -1356,6 +1363,7 @@ async def _run_live_trading(
         risk_manager=risk_manager,
         config=config,
         on_signal=on_signal if confirm else None,
+        notifier=notifier,
     )
 
     try:
@@ -1919,6 +1927,122 @@ def list_live_trades(
             console.print(f"  Total P&L: [red]-${abs(total_pnl):,.2f}[/red]")
 
     console.print()
+
+
+@app.command("notify-test")
+def test_notification(
+    webhook: str | None = typer.Option(
+        None, "--webhook", "-w", help="Discord webhook URL (or use DISCORD_WEBHOOK_URL env)"
+    ),
+    message: str = typer.Option(
+        "Test notification from Trader Bot", "--message", "-m", help="Test message"
+    ),
+) -> None:
+    """Test Discord webhook notification."""
+    asyncio.run(_test_notification(webhook, message))
+
+
+async def _test_notification(webhook_url: str | None, message: str) -> None:
+    """Send a test notification to Discord."""
+    from trader.notifications import DiscordNotifier
+
+    settings = get_settings()
+    url = webhook_url or settings.discord_webhook_url
+
+    if not url:
+        console.print("[red]Error: No Discord webhook URL configured.[/red]")
+        console.print("\nProvide via --webhook or set DISCORD_WEBHOOK_URL in .env")
+        raise typer.Exit(1)
+
+    notifier = DiscordNotifier(url)
+
+    console.print(f"Sending test notification to Discord...")
+
+    # Send a test message
+    success = await notifier.send_message(f"🧪 {message}")
+
+    if success:
+        console.print("[green]Test notification sent successfully![/green]")
+    else:
+        console.print("[red]Failed to send notification. Check webhook URL.[/red]")
+
+    # Also send a sample trade notification
+    console.print("Sending sample trade notification...")
+
+    from trader.core.models import Signal, SignalAction
+    from decimal import Decimal
+
+    sample_signal = Signal(
+        action=SignalAction.BUY,
+        symbol="AAPL",
+        confidence=0.8,
+        reason="SMA crossover - bullish signal",
+    )
+
+    success = await notifier.notify_trade_signal(
+        signal=sample_signal,
+        symbol="AAPL",
+        quantity=10,
+        price=Decimal("150.00"),
+        approved=True,
+    )
+
+    if success:
+        console.print("[green]Sample trade notification sent![/green]")
+    else:
+        console.print("[red]Failed to send trade notification.[/red]")
+
+    await notifier.close()
+
+
+@app.command("notify-summary")
+def send_summary(
+    webhook: str | None = typer.Option(
+        None, "--webhook", "-w", help="Discord webhook URL"
+    ),
+) -> None:
+    """Send daily summary notification to Discord."""
+    asyncio.run(_send_summary_notification(webhook))
+
+
+async def _send_summary_notification(webhook_url: str | None) -> None:
+    """Send daily summary to Discord."""
+    from trader.notifications import DiscordNotifier
+
+    settings = get_settings()
+    url = webhook_url or settings.discord_webhook_url
+
+    if not url:
+        console.print("[red]Error: No Discord webhook URL configured.[/red]")
+        raise typer.Exit(1)
+
+    store = get_trade_store(settings.database_path)
+    stats = store.get_trade_stats()
+
+    if stats["total_trades"] == 0:
+        console.print("[yellow]No trades to summarize.[/yellow]")
+        return
+
+    notifier = DiscordNotifier(url)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    success = await notifier.notify_daily_summary(
+        date=today,
+        starting_equity=100000.0,  # Placeholder
+        ending_equity=100000.0 + stats["total_pnl"],
+        realized_pnl=stats["total_pnl"],
+        num_trades=stats["total_trades"],
+        winning_trades=stats["winning_trades"],
+        losing_trades=stats["losing_trades"],
+    )
+
+    if success:
+        console.print("[green]Daily summary sent to Discord![/green]")
+    else:
+        console.print("[red]Failed to send summary.[/red]")
+
+    await notifier.close()
 
 
 if __name__ == "__main__":
