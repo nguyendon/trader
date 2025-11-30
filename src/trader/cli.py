@@ -1193,5 +1193,200 @@ def version() -> None:
     console.print(f"Trader version {__version__}")
 
 
+@app.command("config")
+def show_config(
+    init: bool = typer.Option(False, "--init", help="Create default config file"),
+) -> None:
+    """Show or initialize configuration file."""
+    from trader.config.strategy_config import (
+        DEFAULT_CONFIG_PATH,
+        create_default_config,
+        load_config,
+    )
+
+    if init:
+        if DEFAULT_CONFIG_PATH.exists():
+            console.print(f"[yellow]Config already exists at {DEFAULT_CONFIG_PATH}[/yellow]")
+            console.print("[dim]Delete it first if you want to recreate[/dim]")
+            return
+
+        create_default_config()
+        console.print(f"[green]Created config at {DEFAULT_CONFIG_PATH}[/green]")
+        console.print("[dim]Edit this file to customize your strategies[/dim]")
+        return
+
+    config = load_config()
+
+    console.print(f"\n[bold blue]Trading Configuration[/bold blue]")
+    console.print(f"[dim]File: {DEFAULT_CONFIG_PATH}[/dim]\n")
+
+    # Strategies
+    console.print("[bold]Strategies:[/bold]")
+    if config.strategies:
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Name")
+        table.add_column("Enabled")
+        table.add_column("Symbols")
+        table.add_column("Params")
+
+        for s in config.strategies:
+            status = "[green]Yes[/green]" if s.enabled else "[dim]No[/dim]"
+            symbols = ", ".join(s.symbols[:3])
+            if len(s.symbols) > 3:
+                symbols += f" (+{len(s.symbols) - 3})"
+            params = ", ".join(f"{k}={v}" for k, v in list(s.params.items())[:2])
+            if len(s.params) > 2:
+                params += "..."
+            table.add_row(s.name, status, symbols or "[dim]default[/dim]", params or "[dim]default[/dim]")
+
+        console.print(table)
+    else:
+        console.print("  [dim]No strategies configured[/dim]")
+
+    # Risk
+    console.print("\n[bold]Risk Settings:[/bold]")
+    console.print(f"  Max position size: {config.risk.max_position_size_pct:.0%}")
+    console.print(f"  Max daily loss: {config.risk.max_daily_loss_pct:.0%}")
+    console.print(f"  Stop loss: {config.risk.stop_loss_pct:.0%}")
+    console.print(f"  Max open positions: {config.risk.max_open_positions}")
+
+    # Backtest
+    console.print("\n[bold]Backtest Defaults:[/bold]")
+    console.print(f"  Initial capital: ${config.backtest.initial_capital:,.0f}")
+    console.print(f"  Commission: ${config.backtest.commission:.2f}")
+    console.print(f"  Days: {config.backtest.days}")
+
+    # Watchlists
+    if config.watchlists:
+        console.print("\n[bold]Watchlists:[/bold]")
+        for w in config.watchlists:
+            console.print(f"  {w.name}: {', '.join(w.symbols[:5])}" +
+                         (f" (+{len(w.symbols) - 5})" if len(w.symbols) > 5 else ""))
+
+    console.print()
+
+
+@app.command("config-run")
+def run_from_config(
+    strategy_name: str = typer.Argument(..., help="Strategy name from config"),
+    days: int | None = typer.Option(None, "--days", "-d", help="Override days from config"),
+) -> None:
+    """Run backtest using settings from config file."""
+    from trader.config.strategy_config import load_config
+
+    config = load_config()
+    strategy_config = config.get_strategy(strategy_name)
+
+    if strategy_config is None:
+        console.print(f"[red]Strategy '{strategy_name}' not found in config[/red]")
+        available = [s.name for s in config.strategies]
+        console.print(f"[dim]Available: {', '.join(available)}[/dim]")
+        raise typer.Exit(1)
+
+    if not strategy_config.enabled:
+        console.print(f"[yellow]Strategy '{strategy_name}' is disabled in config[/yellow]")
+        console.print("[dim]Set enabled: true in config to enable[/dim]")
+        raise typer.Exit(1)
+
+    symbols = strategy_config.symbols or config.default_symbols
+    backtest_days = days or config.backtest.days
+
+    console.print(f"\n[bold blue]Running {strategy_name} from config[/bold blue]")
+    console.print(f"Symbols: {', '.join(symbols)}")
+    console.print(f"Params: {strategy_config.params}")
+    console.print(f"Days: {backtest_days}\n")
+
+    # Run backtest for each symbol
+    asyncio.run(
+        _run_config_backtest(
+            strategy_name=strategy_name,
+            symbols=symbols,
+            params=strategy_config.params,
+            days=backtest_days,
+            capital=config.backtest.initial_capital,
+            commission=config.backtest.commission,
+        )
+    )
+
+
+async def _run_config_backtest(
+    strategy_name: str,
+    symbols: list[str],
+    params: dict,
+    days: int,
+    capital: float,
+    commission: float,
+) -> None:
+    """Run backtests from config file."""
+    settings = get_settings()
+    fetcher = get_data_fetcher(settings)
+
+    # Create strategy with config params
+    try:
+        strategy = get_strategy(strategy_name, **params)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    results: list[dict] = []
+
+    with console.status("[bold green]Running backtests...") as status:
+        for symbol in symbols:
+            status.update(f"[bold green]Testing {symbol}...")
+
+            try:
+                data = await fetcher.fetch_bars_df(
+                    symbol=symbol,
+                    timeframe=TimeFrame.DAY,
+                    start=start_date,
+                    end=end_date,
+                )
+
+                if len(data) < strategy.min_bars_required:
+                    continue
+
+                engine = BacktestEngine(initial_capital=capital, commission=commission)
+                result = await engine.run(strategy=strategy, data=data, symbol=symbol)
+
+                # Save to database
+                store = get_trade_store(settings.database_path)
+                store.save_backtest(result)
+
+                summary = result.summary()
+                results.append({
+                    "symbol": symbol,
+                    "return_pct": summary["total_return_pct"],
+                    "sharpe": summary["sharpe_ratio"],
+                    "trades": summary["num_trades"],
+                })
+
+            except Exception as e:
+                logger.debug(f"Error backtesting {symbol}: {e}")
+
+    if not results:
+        console.print("[yellow]No results[/yellow]")
+        return
+
+    # Display results
+    table = Table(title=f"{strategy_name} Results", show_header=True, header_style="bold cyan")
+    table.add_column("Symbol")
+    table.add_column("Return", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Trades", justify="right")
+
+    for r in results:
+        ret = r["return_pct"]
+        ret_str = f"[green]+{ret:.1f}%[/green]" if ret >= 0 else f"[red]{ret:.1f}%[/red]"
+        table.add_row(r["symbol"], ret_str, f"{r['sharpe']:.2f}", str(r["trades"]))
+
+    console.print(table)
+
+    avg_return = sum(r["return_pct"] for r in results) / len(results)
+    console.print(f"\n[dim]Avg return: {avg_return:+.1f}% across {len(results)} symbols[/dim]\n")
+
+
 if __name__ == "__main__":
     app()
