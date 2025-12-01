@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from trader.broker.base import BaseBroker
-from trader.core.models import Order, OrderSide, OrderStatus, OrderType, Position
+from trader.core.models import Order, OrderClass, OrderSide, OrderStatus, OrderType, Position
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
@@ -147,15 +147,28 @@ class AlpacaBroker(BaseBroker):
             return None
 
     async def submit_order(self, order: Order) -> Order:
-        """Submit an order to Alpaca."""
+        """Submit an order to Alpaca.
+
+        Supports simple orders and bracket orders with stop loss/take profit.
+        """
+        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
         from alpaca.trading.enums import OrderSide as AlpacaSide
         from alpaca.trading.enums import TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+        from alpaca.trading.requests import (
+            LimitOrderRequest,
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
 
         # Map order side
         side = AlpacaSide.BUY if order.side == OrderSide.BUY else AlpacaSide.SELL
 
-        # Create order request based on type
+        # Check if this is a bracket order
+        if order.order_class == OrderClass.BRACKET:
+            return await self._submit_bracket_order(order, side)
+
+        # Create simple order request based on type
         request: MarketOrderRequest | LimitOrderRequest
         if order.order_type == OrderType.MARKET:
             request = MarketOrderRequest(
@@ -191,6 +204,69 @@ class AlpacaBroker(BaseBroker):
         logger.info(
             f"Submitted {order.side.value} order: {order.quantity} {order.symbol} "
             f"(id: {order.broker_order_id}, status: {order.status.value})"
+        )
+
+        return order
+
+    async def _submit_bracket_order(self, order: Order, side: Any) -> Order:
+        """Submit a bracket order with stop loss and/or take profit.
+
+        Bracket orders automatically place exit orders when the entry fills.
+        """
+        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
+        from alpaca.trading.enums import TimeInForce
+        from alpaca.trading.requests import (
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
+
+        # Build stop loss leg
+        stop_loss = None
+        if order.stop_loss_price:
+            if order.stop_loss_limit_price:
+                stop_loss = StopLossRequest(
+                    stop_price=float(order.stop_loss_price),
+                    limit_price=float(order.stop_loss_limit_price),
+                )
+            else:
+                stop_loss = StopLossRequest(stop_price=float(order.stop_loss_price))
+
+        # Build take profit leg
+        take_profit = None
+        if order.take_profit_price:
+            take_profit = TakeProfitRequest(limit_price=float(order.take_profit_price))
+
+        # Create bracket order
+        request = MarketOrderRequest(
+            symbol=order.symbol,
+            qty=order.quantity,
+            side=side,
+            time_in_force=TimeInForce.DAY,
+            order_class=AlpacaOrderClass.BRACKET,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+
+        # Submit order
+        alpaca_order = self.client.submit_order(request)
+
+        # Update our order with Alpaca's response
+        order.broker_order_id = str(alpaca_order.id)  # type: ignore[union-attr]
+        order.status = self._map_status(alpaca_order.status.value)  # type: ignore[union-attr]
+        order.filled_quantity = int(alpaca_order.filled_qty or 0)  # type: ignore[union-attr]
+        if alpaca_order.filled_avg_price:  # type: ignore[union-attr]
+            order.filled_avg_price = Decimal(str(alpaca_order.filled_avg_price))  # type: ignore[union-attr]
+        order.updated_at = datetime.utcnow()
+
+        # Log bracket order details
+        sl_str = f"SL@${float(order.stop_loss_price):.2f}" if order.stop_loss_price else ""
+        tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
+        bracket_str = f" [{sl_str} {tp_str}]".strip()
+
+        logger.info(
+            f"Submitted bracket {order.side.value} order: {order.quantity} {order.symbol}"
+            f"{bracket_str} (id: {order.broker_order_id})"
         )
 
         return order
