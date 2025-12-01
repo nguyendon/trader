@@ -2455,5 +2455,52 @@ async def _cancel_order(order_id: str, force: bool) -> None:
     await broker.disconnect()
 
 
+# =============================================================================
+# Dashboard Command
+# =============================================================================
+
+
+@app.command("dashboard")
+def dashboard(
+    refresh: float = typer.Option(2.0, "--refresh", "-r", help="Refresh rate in seconds"),
+) -> None:
+    """Launch real-time trading dashboard with live updates."""
+    asyncio.run(_run_dashboard(refresh_rate=refresh))
+
+
+async def _run_dashboard(refresh_rate: float) -> None:
+    """Run the trading dashboard."""
+    from trader.broker.alpaca import AlpacaBroker
+    from trader.dashboard.live import TradingDashboard
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        console.print("\nSet ALPACA_API_KEY and ALPACA_SECRET_KEY in .env")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    mode = "Paper" if broker.is_paper else "LIVE"
+    console.print(f"\n[bold blue]Starting Trading Dashboard ({mode})[/bold blue]")
+    console.print(f"Refresh rate: {refresh_rate}s")
+    console.print("\nPress Q to quit, R to refresh, C to close all positions\n")
+
+    try:
+        dashboard = TradingDashboard(broker, refresh_rate=refresh_rate)
+        await dashboard.run()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Dashboard stopped.[/yellow]")
+    finally:
+        await broker.disconnect()
+
+
 if __name__ == "__main__":
     app()
