@@ -110,6 +110,29 @@ class BaseBroker(ABC):
         """Get all open orders."""
         pass
 
+    @abstractmethod
+    async def close_position(self, symbol: str) -> Order | None:
+        """
+        Close an entire position for a symbol.
+
+        Args:
+            symbol: Symbol to close position for
+
+        Returns:
+            The closing order if position existed, None otherwise
+        """
+        pass
+
+    @abstractmethod
+    async def close_all_positions(self) -> list[Order]:
+        """
+        Close all open positions.
+
+        Returns:
+            List of closing orders
+        """
+        pass
+
     # Market data
     @abstractmethod
     async def get_latest_price(self, symbol: str) -> Decimal:

@@ -396,6 +396,58 @@ class AlpacaBroker(BaseBroker):
         alpaca_orders = self.client.get_orders()
         return [self._alpaca_order_to_order(ao) for ao in alpaca_orders]
 
+    async def close_position(self, symbol: str) -> Order | None:
+        """Close an entire position for a symbol."""
+        try:
+            # Get current position
+            position = await self.get_position(symbol)
+            if position is None:
+                logger.warning(f"No position found for {symbol}")
+                return None
+
+            # Close via Alpaca API
+            self.client.close_position(symbol)
+
+            # Create order record
+            order = Order(
+                symbol=symbol,
+                side=OrderSide.SELL if position.quantity > 0 else OrderSide.BUY,
+                quantity=abs(position.quantity),
+                order_type=OrderType.MARKET,
+                status=OrderStatus.SUBMITTED,
+            )
+
+            logger.info(f"Closed position: {position.quantity} {symbol}")
+            return order
+        except Exception as e:
+            logger.error(f"Failed to close position {symbol}: {e}")
+            return None
+
+    async def close_all_positions(self) -> list[Order]:
+        """Close all open positions."""
+        orders = []
+        try:
+            # Use Alpaca's close all positions endpoint
+            self.client.close_all_positions(cancel_orders=True)
+
+            # Get positions that were closed (for logging)
+            positions = await self.get_positions()
+            for pos in positions:
+                order = Order(
+                    symbol=pos.symbol,
+                    side=OrderSide.SELL if pos.quantity > 0 else OrderSide.BUY,
+                    quantity=abs(pos.quantity),
+                    order_type=OrderType.MARKET,
+                    status=OrderStatus.SUBMITTED,
+                )
+                orders.append(order)
+
+            logger.info(f"Closed all positions ({len(orders)} positions)")
+            return orders
+        except Exception as e:
+            logger.error(f"Failed to close all positions: {e}")
+            return orders
+
     async def get_latest_price(self, symbol: str) -> Decimal:
         """Get latest price for a symbol."""
         from alpaca.data.historical import StockHistoricalDataClient

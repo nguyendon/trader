@@ -2078,5 +2078,382 @@ async def _send_summary_notification(webhook_url: str | None) -> None:
     await notifier.close()
 
 
+# =============================================================================
+# Position Management Commands
+# =============================================================================
+
+
+@app.command("account")
+def account_info() -> None:
+    """Show account summary (equity, buying power, cash)."""
+    asyncio.run(_show_account())
+
+
+async def _show_account() -> None:
+    """Display account information."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        console.print("\nSet ALPACA_API_KEY and ALPACA_SECRET_KEY in .env")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    equity = await broker.get_account_value()
+    buying_power = await broker.get_buying_power()
+    cash = await broker.get_cash()
+
+    mode = "Paper" if broker.is_paper else "Live"
+
+    console.print(f"\n[bold blue]Account Summary ({mode})[/bold blue]\n")
+
+    table = Table(show_header=False, box=None)
+    table.add_column("Label", style="dim")
+    table.add_column("Value", style="bold")
+
+    table.add_row("Equity", f"${float(equity):,.2f}")
+    table.add_row("Buying Power", f"${float(buying_power):,.2f}")
+    table.add_row("Cash", f"${float(cash):,.2f}")
+
+    positions = await broker.get_positions()
+    position_value = sum(float(p.market_value or 0) for p in positions)
+    table.add_row("Positions Value", f"${position_value:,.2f}")
+    table.add_row("Open Positions", str(len(positions)))
+
+    console.print(table)
+
+    await broker.disconnect()
+
+
+@app.command("positions")
+def list_positions() -> None:
+    """List all open positions with P&L."""
+    asyncio.run(_list_positions())
+
+
+async def _list_positions() -> None:
+    """Display open positions."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    positions = await broker.get_positions()
+
+    if not positions:
+        console.print("\n[yellow]No open positions.[/yellow]")
+        await broker.disconnect()
+        return
+
+    mode = "Paper" if broker.is_paper else "Live"
+    console.print(f"\n[bold blue]Open Positions ({mode})[/bold blue]\n")
+
+    table = Table()
+    table.add_column("Symbol", style="bold")
+    table.add_column("Qty", justify="right")
+    table.add_column("Avg Entry", justify="right")
+    table.add_column("Current", justify="right")
+    table.add_column("Market Value", justify="right")
+    table.add_column("P&L", justify="right")
+    table.add_column("P&L %", justify="right")
+
+    total_value = 0.0
+    total_pnl = 0.0
+
+    for pos in positions:
+        pnl = float(pos.unrealized_pnl or 0)
+        pnl_pct = (pos.unrealized_pnl_pct or 0) * 100
+        market_value = float(pos.market_value or 0)
+
+        total_value += market_value
+        total_pnl += pnl
+
+        pnl_color = "green" if pnl >= 0 else "red"
+        pnl_str = f"[{pnl_color}]${pnl:,.2f}[/{pnl_color}]"
+        pnl_pct_str = f"[{pnl_color}]{pnl_pct:+.2f}%[/{pnl_color}]"
+
+        table.add_row(
+            pos.symbol,
+            str(pos.quantity),
+            f"${float(pos.avg_entry_price):,.2f}",
+            f"${float(pos.current_price or 0):,.2f}",
+            f"${market_value:,.2f}",
+            pnl_str,
+            pnl_pct_str,
+        )
+
+    console.print(table)
+
+    # Summary
+    pnl_color = "green" if total_pnl >= 0 else "red"
+    console.print(f"\n[bold]Total Value:[/bold] ${total_value:,.2f}")
+    console.print(f"[bold]Total P&L:[/bold] [{pnl_color}]${total_pnl:,.2f}[/{pnl_color}]")
+
+    await broker.disconnect()
+
+
+@app.command("orders")
+def list_orders() -> None:
+    """List all open orders."""
+    asyncio.run(_list_orders())
+
+
+async def _list_orders() -> None:
+    """Display open orders."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    orders = await broker.get_open_orders()
+
+    if not orders:
+        console.print("\n[yellow]No open orders.[/yellow]")
+        await broker.disconnect()
+        return
+
+    mode = "Paper" if broker.is_paper else "Live"
+    console.print(f"\n[bold blue]Open Orders ({mode})[/bold blue]\n")
+
+    table = Table()
+    table.add_column("Order ID", style="dim")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Side")
+    table.add_column("Qty", justify="right")
+    table.add_column("Type")
+    table.add_column("Limit", justify="right")
+    table.add_column("Status")
+    table.add_column("Filled", justify="right")
+
+    for order in orders:
+        side_color = "green" if order.side.value == "buy" else "red"
+        side_str = f"[{side_color}]{order.side.value.upper()}[/{side_color}]"
+
+        limit_str = f"${float(order.limit_price):,.2f}" if order.limit_price else "-"
+        filled_str = f"{order.filled_quantity}/{order.quantity}"
+
+        table.add_row(
+            order.broker_order_id or order.order_id[:8],
+            order.symbol,
+            side_str,
+            str(order.quantity),
+            order.order_type.value,
+            limit_str,
+            order.status.value,
+            filled_str,
+        )
+
+    console.print(table)
+
+    await broker.disconnect()
+
+
+@app.command("close")
+def close_position(
+    symbol: str = typer.Argument(
+        ..., help="Symbol to close (or 'all' to close all positions)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Skip confirmation prompt"
+    ),
+) -> None:
+    """Close a position (or all positions with 'all')."""
+    asyncio.run(_close_position(symbol, force))
+
+
+async def _close_position(symbol: str, force: bool) -> None:
+    """Close position(s)."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    mode = "Paper" if broker.is_paper else "LIVE"
+
+    if symbol.lower() == "all":
+        positions = await broker.get_positions()
+        if not positions:
+            console.print("[yellow]No positions to close.[/yellow]")
+            await broker.disconnect()
+            return
+
+        console.print(f"\n[bold]Close ALL {len(positions)} positions? ({mode})[/bold]")
+        for pos in positions:
+            pnl = float(pos.unrealized_pnl or 0)
+            pnl_color = "green" if pnl >= 0 else "red"
+            console.print(
+                f"  {pos.symbol}: {pos.quantity} shares "
+                f"([{pnl_color}]${pnl:,.2f}[/{pnl_color}])"
+            )
+
+        if not force and not typer.confirm("\nProceed?"):
+            console.print("Cancelled.")
+            await broker.disconnect()
+            return
+
+        orders = await broker.close_all_positions()
+        console.print(f"\n[green]Closed {len(orders)} positions.[/green]")
+
+    else:
+        symbol = symbol.upper()
+        position = await broker.get_position(symbol)
+
+        if not position:
+            console.print(f"[yellow]No position found for {symbol}.[/yellow]")
+            await broker.disconnect()
+            return
+
+        pnl = float(position.unrealized_pnl or 0)
+        pnl_color = "green" if pnl >= 0 else "red"
+
+        console.print(f"\n[bold]Close {symbol} position? ({mode})[/bold]")
+        console.print(f"  Quantity: {position.quantity} shares")
+        console.print(f"  Entry: ${float(position.avg_entry_price):,.2f}")
+        console.print(f"  Current: ${float(position.current_price or 0):,.2f}")
+        console.print(f"  P&L: [{pnl_color}]${pnl:,.2f}[/{pnl_color}]")
+
+        if not force and not typer.confirm("\nProceed?"):
+            console.print("Cancelled.")
+            await broker.disconnect()
+            return
+
+        order = await broker.close_position(symbol)
+        if order:
+            console.print(f"\n[green]Closed {symbol} position.[/green]")
+        else:
+            console.print(f"\n[red]Failed to close {symbol} position.[/red]")
+
+    await broker.disconnect()
+
+
+@app.command("cancel")
+def cancel_order(
+    order_id: str = typer.Argument(
+        ..., help="Order ID to cancel (or 'all' to cancel all orders)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Skip confirmation prompt"
+    ),
+) -> None:
+    """Cancel an order (or all orders with 'all')."""
+    asyncio.run(_cancel_order(order_id, force))
+
+
+async def _cancel_order(order_id: str, force: bool) -> None:
+    """Cancel order(s)."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    mode = "Paper" if broker.is_paper else "LIVE"
+
+    if order_id.lower() == "all":
+        orders = await broker.get_open_orders()
+        if not orders:
+            console.print("[yellow]No open orders to cancel.[/yellow]")
+            await broker.disconnect()
+            return
+
+        console.print(f"\n[bold]Cancel ALL {len(orders)} orders? ({mode})[/bold]")
+        for order in orders:
+            console.print(
+                f"  {order.symbol}: {order.side.value.upper()} {order.quantity} "
+                f"({order.order_type.value})"
+            )
+
+        if not force and not typer.confirm("\nProceed?"):
+            console.print("Cancelled.")
+            await broker.disconnect()
+            return
+
+        cancelled = 0
+        for order in orders:
+            if await broker.cancel_order(order.broker_order_id or order.order_id):
+                cancelled += 1
+
+        console.print(f"\n[green]Cancelled {cancelled} orders.[/green]")
+
+    else:
+        order = await broker.get_order(order_id)
+
+        if not order:
+            console.print(f"[yellow]Order {order_id} not found.[/yellow]")
+            await broker.disconnect()
+            return
+
+        console.print(f"\n[bold]Cancel order? ({mode})[/bold]")
+        console.print(f"  Symbol: {order.symbol}")
+        console.print(f"  Side: {order.side.value.upper()}")
+        console.print(f"  Quantity: {order.quantity}")
+        console.print(f"  Type: {order.order_type.value}")
+        console.print(f"  Status: {order.status.value}")
+
+        if not force and not typer.confirm("\nProceed?"):
+            console.print("Cancelled.")
+            await broker.disconnect()
+            return
+
+        if await broker.cancel_order(order_id):
+            console.print(f"\n[green]Order {order_id} cancelled.[/green]")
+        else:
+            console.print(f"\n[red]Failed to cancel order {order_id}.[/red]")
+
+    await broker.disconnect()
+
+
 if __name__ == "__main__":
     app()

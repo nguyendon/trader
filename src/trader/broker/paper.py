@@ -223,6 +223,31 @@ class PaperBroker(BaseBroker):
         """Get open orders (paper orders are instant, so always empty)."""
         return []
 
+    async def close_position(self, symbol: str) -> Order | None:
+        """Close a position by selling all shares."""
+        position = await self.get_position(symbol)
+        if position is None:
+            return None
+
+        # Create and submit sell order
+        order = Order(
+            symbol=symbol,
+            side=OrderSide.SELL if position.quantity > 0 else OrderSide.BUY,
+            quantity=abs(position.quantity),
+            order_type=OrderType.MARKET,
+        )
+        return await self.submit_order(order)
+
+    async def close_all_positions(self) -> list[Order]:
+        """Close all open positions."""
+        orders = []
+        positions = await self.get_positions()
+        for pos in positions:
+            order = await self.close_position(pos.symbol)
+            if order:
+                orders.append(order)
+        return orders
+
     def reset(self) -> None:
         """Reset broker to initial state."""
         self._cash = self._initial_capital
