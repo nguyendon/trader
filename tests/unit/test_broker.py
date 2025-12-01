@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from trader.broker.paper import PaperBroker
-from trader.core.models import Order, OrderSide, OrderStatus, OrderType
+from trader.core.models import Order, OrderClass, OrderSide, OrderStatus, OrderType
 
 
 class TestPaperBroker:
@@ -313,3 +313,191 @@ class TestPaperBroker:
 
         assert await broker.get_cash() == Decimal("100000")
         assert await broker.get_positions() == []
+
+
+class TestAlpacaBrokerBracketOrders:
+    """Tests for Alpaca broker bracket order logic."""
+
+    def test_bracket_order_detection(self) -> None:
+        """Test that bracket orders are correctly identified."""
+        # Simple order
+        simple_order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+        )
+        assert simple_order.order_class == OrderClass.SIMPLE
+
+        # Bracket order with stop loss
+        bracket_order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            stop_loss_price=Decimal("145.00"),
+        )
+        assert bracket_order.order_class == OrderClass.BRACKET
+
+    def test_trailing_stop_order_fields(self) -> None:
+        """Test trailing stop order field assignment."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,
+            take_profit_price=Decimal("165.00"),
+        )
+
+        assert order.trailing_stop_pct == 0.05
+        assert order.trailing_stop_price is None
+        assert order.take_profit_price == Decimal("165.00")
+        assert order.stop_loss_price is None
+
+    def test_trailing_stop_fixed_dollar(self) -> None:
+        """Test trailing stop with fixed dollar amount."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_price=Decimal("5.00"),
+        )
+
+        assert order.trailing_stop_pct is None
+        assert order.trailing_stop_price == Decimal("5.00")
+
+
+class TestAlpacaBrokerMocked:
+    """Mocked tests for Alpaca broker bracket order submission."""
+
+    @pytest.fixture
+    def mock_alpaca_broker(self, mocker):
+        """Create Alpaca broker with mocked client."""
+        from trader.broker.alpaca import AlpacaBroker
+
+        broker = AlpacaBroker(
+            api_key="test_key",
+            secret_key="test_secret",
+            paper=True,
+        )
+
+        # Mock the trading client
+        mock_client = mocker.MagicMock()
+        broker._client = mock_client
+
+        # Mock order response
+        mock_order = mocker.MagicMock()
+        mock_order.id = "test-order-123"
+        mock_order.status.value = "new"
+        mock_order.filled_qty = 0
+        mock_order.filled_avg_price = None
+        mock_client.submit_order.return_value = mock_order
+
+        # Mock get_latest_price for trailing stop tests
+        async def mock_get_price(_symbol):
+            return Decimal("150.00")
+
+        mocker.patch.object(broker, "get_latest_price", side_effect=mock_get_price)
+
+        return broker, mock_client
+
+    @pytest.mark.asyncio
+    async def test_submit_simple_market_order(self, mock_alpaca_broker, mocker) -> None:
+        """Test submitting a simple market order."""
+        broker, mock_client = mock_alpaca_broker
+
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+        )
+
+        result = await broker.submit_order(order)
+
+        # Verify submit_order was called
+        mock_client.submit_order.assert_called_once()
+        call_args = mock_client.submit_order.call_args[0][0]
+
+        assert call_args.symbol == "AAPL"
+        assert call_args.qty == 100
+        assert result.broker_order_id == "test-order-123"
+
+    @pytest.mark.asyncio
+    async def test_submit_bracket_order_with_stop_loss(self, mock_alpaca_broker, mocker) -> None:
+        """Test submitting a bracket order with stop loss."""
+        broker, mock_client = mock_alpaca_broker
+
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            stop_loss_price=Decimal("145.00"),
+        )
+
+        await broker.submit_order(order)
+
+        # Verify submit_order was called with bracket order
+        mock_client.submit_order.assert_called_once()
+        call_args = mock_client.submit_order.call_args[0][0]
+
+        assert call_args.symbol == "AAPL"
+        assert call_args.qty == 100
+        # Verify stop_loss was included
+        assert call_args.stop_loss is not None
+
+    @pytest.mark.asyncio
+    async def test_submit_trailing_stop_converts_to_fixed(self, mock_alpaca_broker, mocker) -> None:
+        """Test that trailing stop is converted to fixed stop loss.
+
+        Note: Alpaca doesn't support trailing stops in bracket order legs,
+        so we convert to a fixed stop loss based on current price.
+        """
+        broker, mock_client = mock_alpaca_broker
+
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,  # 5% trailing stop
+        )
+
+        result = await broker.submit_order(order)
+
+        # Verify submit_order was called
+        mock_client.submit_order.assert_called_once()
+        call_args = mock_client.submit_order.call_args[0][0]
+
+        assert call_args.symbol == "AAPL"
+        assert call_args.qty == 100
+        # Stop loss should be fixed at 5% below $150 = $142.50
+        assert call_args.stop_loss is not None
+        assert call_args.stop_loss.stop_price == 142.50
+        assert result.broker_order_id == "test-order-123"
+
+    @pytest.mark.asyncio
+    async def test_submit_trailing_stop_with_take_profit(self, mock_alpaca_broker, mocker) -> None:
+        """Test trailing stop converted to fixed stop with take profit."""
+        broker, mock_client = mock_alpaca_broker
+
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,
+            take_profit_price=Decimal("165.00"),
+        )
+
+        await broker.submit_order(order)
+
+        mock_client.submit_order.assert_called_once()
+        call_args = mock_client.submit_order.call_args[0][0]
+
+        # Should have both fixed stop loss and take profit
+        assert call_args.stop_loss is not None
+        assert call_args.stop_loss.stop_price == 142.50  # 5% below $150
+        assert call_args.take_profit is not None
+        assert call_args.take_profit.limit_price == 165.00

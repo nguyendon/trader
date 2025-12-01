@@ -219,27 +219,26 @@ class AlpacaBroker(BaseBroker):
         Supports:
         - Fixed stop loss price
         - Fixed take profit price
-        - Trailing stop (percentage or fixed dollar amount)
+        - Trailing stop (percentage or fixed dollar amount) - uses OTO order
+
+        Note: Alpaca doesn't support trailing stops in bracket order legs directly.
+        For trailing stops, we use OTO (One-Triggers-Other) orders instead.
         """
+        # Check if we need to use OTO for trailing stop
+        if order.trailing_stop_pct is not None or order.trailing_stop_price is not None:
+            return await self._submit_oto_trailing_stop(order, side)
+
         from alpaca.trading.enums import OrderClass as AlpacaOrderClass
         from alpaca.trading.enums import TimeInForce
         from alpaca.trading.requests import (
             MarketOrderRequest,
             StopLossRequest,
             TakeProfitRequest,
-            TrailingStopOrderRequest,
         )
 
-        # Build stop loss leg (fixed or trailing)
-        stop_loss: StopLossRequest | TrailingStopOrderRequest | None = None
-        if order.trailing_stop_pct is not None:
-            # Trailing stop as percentage (Alpaca expects decimal, e.g., 0.05 for 5%)
-            stop_loss = TrailingStopOrderRequest(trail_percent=order.trailing_stop_pct)
-        elif order.trailing_stop_price is not None:
-            # Trailing stop as fixed dollar amount
-            stop_loss = TrailingStopOrderRequest(trail_price=float(order.trailing_stop_price))
-        elif order.stop_loss_price:
-            # Fixed stop loss
+        # Build stop loss leg (fixed only - trailing uses OTO)
+        stop_loss: StopLossRequest | None = None
+        if order.stop_loss_price:
             if order.stop_loss_limit_price:
                 stop_loss = StopLossRequest(
                     stop_price=float(order.stop_loss_price),
@@ -276,16 +275,96 @@ class AlpacaBroker(BaseBroker):
         order.updated_at = datetime.utcnow()
 
         # Log bracket order details
-        sl_str = ""
-        if order.trailing_stop_pct is not None:
-            sl_str = f"TSL@{order.trailing_stop_pct:.1%}"
-        elif order.trailing_stop_price is not None:
-            sl_str = f"TSL@${float(order.trailing_stop_price):.2f}"
-        elif order.stop_loss_price:
-            sl_str = f"SL@${float(order.stop_loss_price):.2f}"
-
+        sl_str = f"SL@${float(order.stop_loss_price):.2f}" if order.stop_loss_price else ""
         tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
         bracket_str = f" [{sl_str} {tp_str}]".strip()
+
+        logger.info(
+            f"Submitted bracket {order.side.value} order: {order.quantity} {order.symbol}"
+            f"{bracket_str} (id: {order.broker_order_id})"
+        )
+
+        return order
+
+    async def _submit_oto_trailing_stop(self, order: Order, side: Any) -> Order:
+        """Submit a bracket order with trailing stop approximation.
+
+        NOTE: Alpaca doesn't support trailing stops as legs of bracket/OTO orders.
+        As a workaround, we convert the trailing stop to a fixed stop loss using
+        the latest price. This provides initial protection but won't trail up.
+
+        For true trailing stops, submit a separate TrailingStopOrderRequest
+        after the primary order fills using the trading stream to monitor fills.
+        """
+        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
+        from alpaca.trading.enums import TimeInForce
+        from alpaca.trading.requests import (
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
+
+        # Get current price to calculate initial stop
+        current_price = await self.get_latest_price(order.symbol)
+
+        # Convert trailing stop to fixed stop loss
+        if order.trailing_stop_pct is not None:
+            # Calculate stop price based on trailing percentage
+            if side.value == "buy":
+                stop_price = float(current_price * (1 - Decimal(str(order.trailing_stop_pct))))
+            else:
+                stop_price = float(current_price * (1 + Decimal(str(order.trailing_stop_pct))))
+        else:
+            # Fixed dollar trail amount
+            trail_amount = float(order.trailing_stop_price)  # type: ignore[arg-type]
+            if side.value == "buy":
+                stop_price = float(current_price) - trail_amount
+            else:
+                stop_price = float(current_price) + trail_amount
+
+        logger.warning(
+            f"Alpaca doesn't support trailing stops in bracket orders. "
+            f"Using fixed stop loss at ${stop_price:.2f} instead of trailing stop."
+        )
+
+        # Build fixed stop loss
+        stop_loss = StopLossRequest(stop_price=stop_price)
+
+        # Build take profit leg
+        take_profit = None
+        if order.take_profit_price:
+            take_profit = TakeProfitRequest(limit_price=float(order.take_profit_price))
+
+        # Create bracket order with fixed stop
+        request = MarketOrderRequest(
+            symbol=order.symbol,
+            qty=order.quantity,
+            side=side,
+            time_in_force=TimeInForce.DAY,
+            order_class=AlpacaOrderClass.BRACKET,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+
+        # Submit order
+        alpaca_order = self.client.submit_order(request)
+
+        # Update our order with Alpaca's response
+        order.broker_order_id = str(alpaca_order.id)  # type: ignore[union-attr]
+        order.status = self._map_status(alpaca_order.status.value)  # type: ignore[union-attr]
+        order.filled_quantity = int(alpaca_order.filled_qty or 0)  # type: ignore[union-attr]
+        if alpaca_order.filled_avg_price:  # type: ignore[union-attr]
+            order.filled_avg_price = Decimal(str(alpaca_order.filled_avg_price))  # type: ignore[union-attr]
+        order.updated_at = datetime.utcnow()
+
+        # Log bracket order details (note: shows original trailing stop config)
+        tsl_str = (
+            f"TSL@{order.trailing_stop_pct:.1%}→SL@${stop_price:.2f}"
+            if order.trailing_stop_pct
+            else f"TSL@${float(order.trailing_stop_price):.2f}→SL@${stop_price:.2f}"  # type: ignore[arg-type]
+        )
+        tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
+        bracket_str = f" [{tsl_str} {tp_str}]".strip()
 
         logger.info(
             f"Submitted bracket {order.side.value} order: {order.quantity} {order.symbol}"

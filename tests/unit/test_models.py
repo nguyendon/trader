@@ -9,6 +9,7 @@ import pytest
 from trader.core.models import (
     Bar,
     Order,
+    OrderClass,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -144,6 +145,122 @@ class TestOrder:
         order1 = Order(symbol="AAPL", side=OrderSide.BUY, quantity=100)
         order2 = Order(symbol="AAPL", side=OrderSide.BUY, quantity=100)
         assert order1.order_id != order2.order_id
+
+
+class TestBracketOrder:
+    """Tests for bracket orders with stop loss and take profit."""
+
+    def test_bracket_order_with_stop_loss(self) -> None:
+        """Test bracket order with stop loss price."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            stop_loss_price=Decimal("145.00"),
+        )
+        assert order.order_class == OrderClass.BRACKET
+        assert order.stop_loss_price == Decimal("145.00")
+
+    def test_bracket_order_with_take_profit(self) -> None:
+        """Test bracket order with take profit price."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            take_profit_price=Decimal("165.00"),
+        )
+        assert order.order_class == OrderClass.BRACKET
+        assert order.take_profit_price == Decimal("165.00")
+
+    def test_bracket_order_with_both_stop_and_profit(self) -> None:
+        """Test bracket order with both stop loss and take profit."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            stop_loss_price=Decimal("145.00"),
+            take_profit_price=Decimal("165.00"),
+        )
+        assert order.stop_loss_price == Decimal("145.00")
+        assert order.take_profit_price == Decimal("165.00")
+
+    def test_bracket_order_with_stop_loss_limit(self) -> None:
+        """Test bracket order with stop loss limit price."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            stop_loss_price=Decimal("145.00"),
+            stop_loss_limit_price=Decimal("144.50"),
+        )
+        assert order.stop_loss_price == Decimal("145.00")
+        assert order.stop_loss_limit_price == Decimal("144.50")
+
+    def test_bracket_order_without_stops_raises(self) -> None:
+        """Test that bracket order without any stops raises error."""
+        with pytest.raises(ValueError, match="Bracket orders require"):
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_class=OrderClass.BRACKET,
+            )
+
+
+class TestTrailingStopOrder:
+    """Tests for trailing stop orders."""
+
+    def test_trailing_stop_percentage(self) -> None:
+        """Test bracket order with trailing stop percentage."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,  # 5%
+        )
+        assert order.order_class == OrderClass.BRACKET
+        assert order.trailing_stop_pct == 0.05
+
+    def test_trailing_stop_fixed_price(self) -> None:
+        """Test bracket order with trailing stop fixed dollar amount."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_price=Decimal("5.00"),  # $5 trail
+        )
+        assert order.trailing_stop_price == Decimal("5.00")
+
+    def test_trailing_stop_with_take_profit(self) -> None:
+        """Test trailing stop combined with take profit."""
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,
+            take_profit_price=Decimal("165.00"),
+        )
+        assert order.trailing_stop_pct == 0.05
+        assert order.take_profit_price == Decimal("165.00")
+
+    def test_trailing_stop_satisfies_bracket_requirement(self) -> None:
+        """Test that trailing stop alone satisfies bracket order requirement."""
+        # Should not raise - trailing stop is sufficient for bracket order
+        order = Order(
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_class=OrderClass.BRACKET,
+            trailing_stop_pct=0.05,
+        )
+        assert order.order_class == OrderClass.BRACKET
 
 
 class TestPosition:
