@@ -105,6 +105,15 @@ class Signal:
             raise ValueError("Confidence must be between 0 and 1")
 
 
+class OrderClass(str, Enum):
+    """Order class for bracket orders."""
+
+    SIMPLE = "simple"  # Single order
+    BRACKET = "bracket"  # Entry + stop loss + take profit
+    OCO = "oco"  # One-cancels-other (stop loss OR take profit)
+    OTO = "oto"  # One-triggers-other
+
+
 @dataclass
 class Order:
     """Order to be submitted to a broker."""
@@ -124,6 +133,12 @@ class Order:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     signal: Signal | None = None
 
+    # Bracket order fields
+    order_class: OrderClass = OrderClass.SIMPLE
+    stop_loss_price: Decimal | None = None  # Stop loss trigger price
+    stop_loss_limit_price: Decimal | None = None  # Optional limit for stop loss
+    take_profit_price: Decimal | None = None  # Take profit limit price
+
     def __post_init__(self) -> None:
         """Validate order after initialization."""
         if self.quantity <= 0:
@@ -132,6 +147,9 @@ class Order:
             raise ValueError("Limit price required for limit orders")
         if self.order_type == OrderType.STOP and self.stop_price is None:
             raise ValueError("Stop price required for stop orders")
+        if self.order_class == OrderClass.BRACKET:
+            if self.stop_loss_price is None and self.take_profit_price is None:
+                raise ValueError("Bracket orders require stop_loss or take_profit")
 
 
 @dataclass
