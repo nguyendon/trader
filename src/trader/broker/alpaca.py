@@ -9,7 +9,14 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from trader.broker.base import BaseBroker
-from trader.core.models import Order, OrderClass, OrderSide, OrderStatus, OrderType, Position
+from trader.core.models import (
+    Order,
+    OrderClass,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    Position,
+)
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
@@ -151,14 +158,11 @@ class AlpacaBroker(BaseBroker):
 
         Supports simple orders and bracket orders with stop loss/take profit.
         """
-        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
         from alpaca.trading.enums import OrderSide as AlpacaSide
         from alpaca.trading.enums import TimeInForce
         from alpaca.trading.requests import (
             LimitOrderRequest,
             MarketOrderRequest,
-            StopLossRequest,
-            TakeProfitRequest,
         )
 
         # Map order side
@@ -209,9 +213,13 @@ class AlpacaBroker(BaseBroker):
         return order
 
     async def _submit_bracket_order(self, order: Order, side: Any) -> Order:
-        """Submit a bracket order with stop loss and/or take profit.
+        """Submit a bracket order with stop loss, take profit, or trailing stop.
 
         Bracket orders automatically place exit orders when the entry fills.
+        Supports:
+        - Fixed stop loss price
+        - Fixed take profit price
+        - Trailing stop (percentage or fixed dollar amount)
         """
         from alpaca.trading.enums import OrderClass as AlpacaOrderClass
         from alpaca.trading.enums import TimeInForce
@@ -219,11 +227,19 @@ class AlpacaBroker(BaseBroker):
             MarketOrderRequest,
             StopLossRequest,
             TakeProfitRequest,
+            TrailingStopOrderRequest,
         )
 
-        # Build stop loss leg
-        stop_loss = None
-        if order.stop_loss_price:
+        # Build stop loss leg (fixed or trailing)
+        stop_loss: StopLossRequest | TrailingStopOrderRequest | None = None
+        if order.trailing_stop_pct is not None:
+            # Trailing stop as percentage (Alpaca expects decimal, e.g., 0.05 for 5%)
+            stop_loss = TrailingStopOrderRequest(trail_percent=order.trailing_stop_pct)
+        elif order.trailing_stop_price is not None:
+            # Trailing stop as fixed dollar amount
+            stop_loss = TrailingStopOrderRequest(trail_price=float(order.trailing_stop_price))
+        elif order.stop_loss_price:
+            # Fixed stop loss
             if order.stop_loss_limit_price:
                 stop_loss = StopLossRequest(
                     stop_price=float(order.stop_loss_price),
@@ -260,7 +276,14 @@ class AlpacaBroker(BaseBroker):
         order.updated_at = datetime.utcnow()
 
         # Log bracket order details
-        sl_str = f"SL@${float(order.stop_loss_price):.2f}" if order.stop_loss_price else ""
+        sl_str = ""
+        if order.trailing_stop_pct is not None:
+            sl_str = f"TSL@{order.trailing_stop_pct:.1%}"
+        elif order.trailing_stop_price is not None:
+            sl_str = f"TSL@${float(order.trailing_stop_price):.2f}"
+        elif order.stop_loss_price:
+            sl_str = f"SL@${float(order.stop_loss_price):.2f}"
+
         tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
         bracket_str = f" [{sl_str} {tp_str}]".strip()
 

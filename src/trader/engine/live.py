@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from loguru import logger
 
-from trader.core.models import Order, OrderClass, OrderSide, OrderType, Signal, SignalAction
+from trader.core.models import (
+    Order,
+    OrderClass,
+    OrderSide,
+    OrderType,
+    Signal,
+    SignalAction,
+)
 
 if TYPE_CHECKING:
     from trader.broker.base import BaseBroker
@@ -55,6 +63,7 @@ class SafetyLimits:
     # Stop loss / take profit settings
     stop_loss_pct: float | None = None  # Auto stop loss as % below entry (e.g., 0.05 = 5%)
     take_profit_pct: float | None = None  # Auto take profit as % above entry (e.g., 0.10 = 10%)
+    trailing_stop_pct: float | None = None  # Trailing stop as % (e.g., 0.05 = 5%)
     use_bracket_orders: bool = True  # Use bracket orders when stop/profit set
 
 
@@ -399,21 +408,24 @@ class LiveTradingEngine:
                 return
 
         # Optional human confirmation
-        if self.config.safety.require_confirmation or self.on_signal:
-            if self.on_signal:
-                approved = self.on_signal(signal, symbol, quantity)
-                if not approved:
-                    logger.info(f"{symbol}: Trade rejected by confirmation callback")
-                    return
+        if (self.config.safety.require_confirmation or self.on_signal) and self.on_signal:
+            approved = self.on_signal(signal, symbol, quantity)
+            if not approved:
+                logger.info(f"{symbol}: Trade rejected by confirmation callback")
+                return
 
         # Calculate stop loss and take profit prices
         safety = self.config.safety
         stop_loss_price = None
         take_profit_price = None
+        trailing_stop_pct = None
 
         # Use signal's stop/profit if provided, otherwise use safety defaults
         if signal.stop_loss:
             stop_loss_price = signal.stop_loss
+        elif safety.trailing_stop_pct and signal.action == SignalAction.BUY:
+            # Trailing stop takes precedence over fixed stop loss
+            trailing_stop_pct = safety.trailing_stop_pct
         elif safety.stop_loss_pct and signal.action == SignalAction.BUY:
             stop_loss_price = current_price * Decimal(1 - safety.stop_loss_pct)
 
@@ -426,7 +438,7 @@ class LiveTradingEngine:
         use_bracket = (
             safety.use_bracket_orders
             and signal.action == SignalAction.BUY  # Only for entry orders
-            and (stop_loss_price or take_profit_price)
+            and (stop_loss_price or take_profit_price or trailing_stop_pct)
         )
 
         order = Order(
@@ -438,13 +450,16 @@ class LiveTradingEngine:
             order_class=OrderClass.BRACKET if use_bracket else OrderClass.SIMPLE,
             stop_loss_price=stop_loss_price if use_bracket else None,
             take_profit_price=take_profit_price if use_bracket else None,
+            trailing_stop_pct=trailing_stop_pct if use_bracket else None,
         )
 
         # Build log message
         bracket_info = ""
         if use_bracket:
             parts = []
-            if stop_loss_price:
+            if trailing_stop_pct:
+                parts.append(f"TSL@{trailing_stop_pct:.1%}")
+            elif stop_loss_price:
                 parts.append(f"SL@${float(stop_loss_price):.2f}")
             if take_profit_price:
                 parts.append(f"TP@${float(take_profit_price):.2f}")

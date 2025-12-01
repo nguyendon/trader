@@ -139,6 +139,10 @@ class Order:
     stop_loss_limit_price: Decimal | None = None  # Optional limit for stop loss
     take_profit_price: Decimal | None = None  # Take profit limit price
 
+    # Trailing stop fields
+    trailing_stop_pct: float | None = None  # Trailing stop as percentage (e.g., 0.05 = 5%)
+    trailing_stop_price: Decimal | None = None  # Trailing stop as fixed dollar amount
+
     def __post_init__(self) -> None:
         """Validate order after initialization."""
         if self.quantity <= 0:
@@ -147,9 +151,14 @@ class Order:
             raise ValueError("Limit price required for limit orders")
         if self.order_type == OrderType.STOP and self.stop_price is None:
             raise ValueError("Stop price required for stop orders")
-        if self.order_class == OrderClass.BRACKET:
-            if self.stop_loss_price is None and self.take_profit_price is None:
-                raise ValueError("Bracket orders require stop_loss or take_profit")
+        if (
+            self.order_class == OrderClass.BRACKET
+            and self.stop_loss_price is None
+            and self.take_profit_price is None
+            and self.trailing_stop_pct is None
+            and self.trailing_stop_price is None
+        ):
+            raise ValueError("Bracket orders require stop_loss, take_profit, or trailing_stop")
 
 
 @dataclass

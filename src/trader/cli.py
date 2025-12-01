@@ -1213,6 +1213,9 @@ def live_trading(
     take_profit: float | None = typer.Option(
         None, "--take-profit", "-tp", help="Take profit % (e.g., 10 for 10%)"
     ),
+    trailing_stop: float | None = typer.Option(
+        None, "--trailing-stop", "-ts", help="Trailing stop % (e.g., 5 for 5%)"
+    ),
     confirm: bool = typer.Option(
         True, "--confirm/--no-confirm", help="Require confirmation for each trade"
     ),
@@ -1228,13 +1231,14 @@ def live_trading(
       - Portfolio value limits
       - Daily loss limits
       - Max trades per day
-      - Stop loss / take profit (bracket orders)
+      - Stop loss / take profit / trailing stop (bracket orders)
       - Optional trade confirmation
 
     Examples:
       trader live AAPL --strategy sma
       trader live AAPL,MSFT --interval 300 --day-trade
       trader live NVDA --stop-loss 5 --take-profit 10
+      trader live NVDA --trailing-stop 5 --take-profit 10
       trader live AAPL --max-position 5000 --no-confirm
     """
     symbol_list = [s.strip().upper() for s in symbols.split(",")]
@@ -1250,6 +1254,7 @@ def live_trading(
             max_trades=max_trades,
             stop_loss_pct=stop_loss / 100 if stop_loss else None,
             take_profit_pct=take_profit / 100 if take_profit else None,
+            trailing_stop_pct=trailing_stop / 100 if trailing_stop else None,
             confirm=confirm,
         )
     )
@@ -1266,12 +1271,18 @@ async def _run_live_trading(
     max_trades: int,
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    trailing_stop_pct: float | None,
     confirm: bool,
 ) -> None:
     """Run live trading with Alpaca broker."""
     from trader.broker.alpaca import AlpacaBroker
     from trader.data.fetcher import AlpacaDataFetcher
-    from trader.engine.live import EngineConfig, LiveTradingEngine, SafetyLimits, TradingMode
+    from trader.engine.live import (
+        EngineConfig,
+        LiveTradingEngine,
+        SafetyLimits,
+        TradingMode,
+    )
     from trader.risk.manager import RiskConfig, RiskManager
 
     settings = get_settings()
@@ -1304,7 +1315,9 @@ async def _run_live_trading(
     console.print(f"  Max portfolio: ${max_portfolio:,.0f}")
     console.print(f"  Max daily loss: ${max_daily_loss:,.0f}")
     console.print(f"  Max trades/day: {max_trades}")
-    if stop_loss_pct:
+    if trailing_stop_pct:
+        console.print(f"  Trailing Stop: {trailing_stop_pct * 100:.1f}%")
+    elif stop_loss_pct:
         console.print(f"  Stop Loss: {stop_loss_pct * 100:.1f}%")
     if take_profit_pct:
         console.print(f"  Take Profit: {take_profit_pct * 100:.1f}%")
@@ -1358,6 +1371,7 @@ async def _run_live_trading(
         require_confirmation=confirm,
         stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
+        trailing_stop_pct=trailing_stop_pct,
     )
 
     config = EngineConfig(
@@ -1974,7 +1988,7 @@ async def _test_notification(webhook_url: str | None, message: str) -> None:
 
     notifier = DiscordNotifier(url)
 
-    console.print(f"Sending test notification to Discord...")
+    console.print("Sending test notification to Discord...")
 
     # Send a test message
     success = await notifier.send_message(f"🧪 {message}")
@@ -1987,8 +2001,9 @@ async def _test_notification(webhook_url: str | None, message: str) -> None:
     # Also send a sample trade notification
     console.print("Sending sample trade notification...")
 
-    from trader.core.models import Signal, SignalAction
     from decimal import Decimal
+
+    from trader.core.models import Signal, SignalAction
 
     sample_signal = Signal(
         action=SignalAction.BUY,
