@@ -775,6 +775,150 @@ def strategies() -> None:
     console.print("[dim]Example: trader backtest AAPL --strategy rsi[/dim]\n")
 
 
+@app.command("multi")
+def multi_strategy(
+    symbols: str = typer.Argument(
+        "AAPL,MSFT", help="Comma-separated symbols to trade"
+    ),
+    strategies_list: str = typer.Option(
+        "sma,rsi,momentum",
+        "--strategies",
+        "-S",
+        help="Comma-separated strategy names",
+    ),
+    aggregation: str = typer.Option(
+        "weighted",
+        "--aggregation",
+        "-a",
+        help="Signal aggregation: weighted, majority, unanimous, any, first",
+    ),
+    min_confidence: float = typer.Option(
+        0.5, "--min-confidence", help="Minimum confidence threshold (0-1)"
+    ),
+    interval: int = typer.Option(
+        60, "--interval", "-i", help="Check interval in seconds"
+    ),
+    capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
+) -> None:
+    """Run multi-strategy paper trading with multiple strategies."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",")]
+    strategy_names = [s.strip().lower() for s in strategies_list.split(",")]
+
+    asyncio.run(
+        _run_multi_strategy(
+            symbols=symbol_list,
+            strategy_names=strategy_names,
+            aggregation=aggregation,
+            min_confidence=min_confidence,
+            interval=interval,
+            capital=capital,
+        )
+    )
+
+
+async def _run_multi_strategy(
+    symbols: list[str],
+    strategy_names: list[str],
+    aggregation: str,
+    min_confidence: float,
+    interval: int,
+    capital: float,
+) -> None:
+    """Run multi-strategy paper trading."""
+    from trader.broker.paper import PaperBroker
+    from trader.strategies.multi import MultiStrategyProcessor, create_strategy_group
+
+    console.print("\n[bold blue]Multi-Strategy Paper Trading[/bold blue]\n")
+    console.print(f"Symbols: {', '.join(symbols)}")
+    console.print(f"Strategies: {', '.join(strategy_names)}")
+    console.print(f"Aggregation: {aggregation}")
+    console.print(f"Min Confidence: {min_confidence}")
+    console.print(f"Initial Capital: ${capital:,.2f}")
+    console.print(f"Check Interval: {interval}s")
+    console.print("\n[yellow]Using mock data (no API key required)[/yellow]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    # Create strategy group
+    try:
+        group = create_strategy_group(
+            strategies=strategy_names,
+            aggregation=aggregation,
+            min_confidence=min_confidence,
+        )
+        processor = MultiStrategyProcessor(group)
+    except ValueError as e:
+        console.print(f"[red]Error creating strategy group: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print(f"[green]Initialized {len(processor.strategy_names)} strategies[/green]")
+
+    # Create components
+    broker = PaperBroker(initial_capital=capital)
+
+    # Set initial prices for paper broker
+    for symbol in symbols:
+        broker.set_price(symbol, 150.0)
+
+    try:
+        console.print("[green]Starting multi-strategy engine...[/green]")
+        await broker.connect()
+
+        account_value = await broker.get_account_value()
+        console.print(f"Account Value: ${account_value:,.2f}")
+        console.print(f"Cash: ${await broker.get_cash():,.2f}")
+
+        # Demo: Process symbols with multi-strategy
+        console.print("\n[bold]Signal Generation Demo:[/bold]\n")
+
+        import random
+
+        import pandas as pd
+
+        # Generate mock data for each symbol
+        for symbol in symbols:
+            # Create mock OHLCV data
+            dates = pd.date_range(end=datetime.now(), periods=100, freq="D")
+            prices = [150.0]
+            for _ in range(99):
+                prices.append(prices[-1] * (1 + random.uniform(-0.02, 0.02)))
+
+            data = pd.DataFrame({
+                "open": prices,
+                "high": [p * 1.01 for p in prices],
+                "low": [p * 0.99 for p in prices],
+                "close": prices,
+                "volume": [1000000] * 100,
+            }, index=dates)
+
+            # Process symbol with multi-strategy
+            signal = processor.process_symbol(data, symbol, position=None)
+
+            # Display result
+            action_color = {
+                "buy": "green",
+                "sell": "red",
+                "hold": "yellow",
+            }[signal.action.value]
+
+            console.print(f"[bold]{symbol}[/bold]:")
+            console.print(f"  Action: [{action_color}]{signal.action.value.upper()}[/{action_color}]")
+            console.print(f"  Confidence: {signal.confidence:.1%}")
+            console.print(f"  Reason: {signal.reason}")
+            if "scores" in signal.metadata:
+                scores = signal.metadata["scores"]
+                console.print(f"  Scores: BUY={scores['buy']:.2f}, SELL={scores['sell']:.2f}, HOLD={scores['hold']:.2f}")
+            console.print()
+
+        await broker.disconnect()
+        console.print("[green]Multi-strategy demo complete![/green]")
+        console.print(
+            "\n[dim]Tip: Use 'trader strategies' to see available strategies[/dim]"
+        )
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping...[/yellow]")
+
+
 @app.command("runs")
 def list_runs(
     strategy: str | None = typer.Option(None, "--strategy", "-S", help="Filter by strategy"),

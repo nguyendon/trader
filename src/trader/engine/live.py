@@ -12,6 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 from loguru import logger
 
 from trader.core.models import (
@@ -19,6 +20,7 @@ from trader.core.models import (
     OrderClass,
     OrderSide,
     OrderType,
+    Position,
     Signal,
     SignalAction,
 )
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from trader.notifications.discord import DiscordNotifier
     from trader.risk.manager import RiskManager
     from trader.strategies.base import BaseStrategy
+    from trader.strategies.multi import MultiStrategyProcessor
 
 
 class EngineState(str, Enum):
@@ -113,27 +116,35 @@ class LiveTradingEngine:
         self,
         broker: BaseBroker,
         data_fetcher: BaseDataFetcher,
-        strategy: BaseStrategy,
-        risk_manager: RiskManager,
+        strategy: BaseStrategy | None = None,
+        risk_manager: RiskManager | None = None,
         config: EngineConfig | None = None,
         on_signal: Callable[[Signal, str, int], bool] | None = None,
         notifier: DiscordNotifier | None = None,
+        multi_strategy: MultiStrategyProcessor | None = None,
     ) -> None:
         """Initialize the trading engine.
 
         Args:
             broker: Broker for order execution
             data_fetcher: Data source for market data
-            strategy: Trading strategy to execute
+            strategy: Single trading strategy to execute (use this OR multi_strategy)
             risk_manager: Risk manager for position sizing
             config: Engine configuration
             on_signal: Optional callback for signal confirmation.
                        Called with (signal, symbol, quantity). Return True to execute.
             notifier: Optional Discord notifier for trade alerts
+            multi_strategy: Multi-strategy processor (use this OR strategy)
         """
+        if strategy is None and multi_strategy is None:
+            raise ValueError("Must provide either 'strategy' or 'multi_strategy'")
+        if strategy is not None and multi_strategy is not None:
+            raise ValueError("Cannot provide both 'strategy' and 'multi_strategy'")
+
         self.broker = broker
         self.data_fetcher = data_fetcher
         self.strategy = strategy
+        self.multi_strategy = multi_strategy
         self.risk_manager = risk_manager
         self.config = config or EngineConfig()
         self.on_signal = on_signal
@@ -323,6 +334,39 @@ class LiveTradingEngine:
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}")
 
+    def _get_min_bars_required(self) -> int:
+        """Get minimum bars required from active strategy/strategies."""
+        if self.strategy:
+            return self.strategy.min_bars_required
+        elif self.multi_strategy:
+            return self.multi_strategy.min_bars_required
+        return 1
+
+    def _generate_signal(
+        self,
+        data: pd.DataFrame,
+        symbol: str,
+        position: Position | None,
+    ) -> Signal:
+        """Generate signal using single strategy or multi-strategy processor."""
+        if self.strategy:
+            # Single strategy mode
+            data_with_indicators = self.strategy.calculate_indicators(data)
+            return self.strategy.generate_signal(
+                data=data_with_indicators,
+                symbol=symbol,
+                position=position,
+            )
+        elif self.multi_strategy:
+            # Multi-strategy mode - processor handles indicators internally
+            return self.multi_strategy.process_symbol(
+                data=data,
+                symbol=symbol,
+                position=position,
+            )
+        else:
+            raise RuntimeError("No strategy configured")
+
     async def _process_symbol(self, symbol: str) -> None:
         """Process a single symbol - fetch data, generate signal, execute."""
         # Fetch recent data
@@ -338,22 +382,16 @@ class LiveTradingEngine:
             end=end,
         )
 
-        if len(data) < self.strategy.min_bars_required:
-            logger.debug(f"{symbol}: Not enough data ({len(data)} bars)")
+        min_bars = self._get_min_bars_required()
+        if len(data) < min_bars:
+            logger.debug(f"{symbol}: Not enough data ({len(data)} bars, need {min_bars})")
             return
-
-        # Calculate indicators
-        data = self.strategy.calculate_indicators(data)
 
         # Get current position
         position = await self.broker.get_position(symbol)
 
-        # Generate signal
-        signal = self.strategy.generate_signal(
-            data=data,
-            symbol=symbol,
-            position=position,
-        )
+        # Generate signal (single or multi-strategy)
+        signal = self._generate_signal(data, symbol, position)
 
         if signal.action == SignalAction.HOLD:
             logger.debug(f"{symbol}: {signal.reason}")
