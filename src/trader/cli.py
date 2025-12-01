@@ -1207,6 +1207,12 @@ def live_trading(
     max_trades: int = typer.Option(
         20, "--max-trades", help="Max trades per day"
     ),
+    stop_loss: float | None = typer.Option(
+        None, "--stop-loss", "-sl", help="Stop loss % (e.g., 5 for 5%)"
+    ),
+    take_profit: float | None = typer.Option(
+        None, "--take-profit", "-tp", help="Take profit % (e.g., 10 for 10%)"
+    ),
     confirm: bool = typer.Option(
         True, "--confirm/--no-confirm", help="Require confirmation for each trade"
     ),
@@ -1222,12 +1228,14 @@ def live_trading(
       - Portfolio value limits
       - Daily loss limits
       - Max trades per day
+      - Stop loss / take profit (bracket orders)
       - Optional trade confirmation
 
     Examples:
       trader live AAPL --strategy sma
       trader live AAPL,MSFT --interval 300 --day-trade
-      trader live NVDA --max-position 5000 --no-confirm
+      trader live NVDA --stop-loss 5 --take-profit 10
+      trader live AAPL --max-position 5000 --no-confirm
     """
     symbol_list = [s.strip().upper() for s in symbols.split(",")]
     asyncio.run(
@@ -1240,6 +1248,8 @@ def live_trading(
             max_portfolio=max_portfolio,
             max_daily_loss=max_daily_loss,
             max_trades=max_trades,
+            stop_loss_pct=stop_loss / 100 if stop_loss else None,
+            take_profit_pct=take_profit / 100 if take_profit else None,
             confirm=confirm,
         )
     )
@@ -1254,6 +1264,8 @@ async def _run_live_trading(
     max_portfolio: float,
     max_daily_loss: float,
     max_trades: int,
+    stop_loss_pct: float | None,
+    take_profit_pct: float | None,
     confirm: bool,
 ) -> None:
     """Run live trading with Alpaca broker."""
@@ -1292,6 +1304,10 @@ async def _run_live_trading(
     console.print(f"  Max portfolio: ${max_portfolio:,.0f}")
     console.print(f"  Max daily loss: ${max_daily_loss:,.0f}")
     console.print(f"  Max trades/day: {max_trades}")
+    if stop_loss_pct:
+        console.print(f"  Stop Loss: {stop_loss_pct * 100:.1f}%")
+    if take_profit_pct:
+        console.print(f"  Take Profit: {take_profit_pct * 100:.1f}%")
     console.print(f"  Confirmation: {'Required' if confirm else 'Auto'}")
 
     if not settings.alpaca_paper:
@@ -1340,6 +1356,8 @@ async def _run_live_trading(
         max_loss_per_day=max_daily_loss,
         max_trades_per_day=max_trades,
         require_confirmation=confirm,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
     )
 
     config = EngineConfig(

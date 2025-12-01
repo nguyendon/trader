@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from loguru import logger
 
-from trader.core.models import Order, OrderSide, OrderType, Signal, SignalAction
+from trader.core.models import Order, OrderClass, OrderSide, OrderType, Signal, SignalAction
 
 if TYPE_CHECKING:
     from trader.broker.base import BaseBroker
@@ -51,6 +51,11 @@ class SafetyLimits:
     max_trades_per_day: int = 20  # Max number of trades per day
     max_loss_per_trade: float = 200.0  # Max loss on single trade
     require_confirmation: bool = False  # Require human confirmation
+
+    # Stop loss / take profit settings
+    stop_loss_pct: float | None = None  # Auto stop loss as % below entry (e.g., 0.05 = 5%)
+    take_profit_pct: float | None = None  # Auto take profit as % above entry (e.g., 0.10 = 10%)
+    use_bracket_orders: bool = True  # Use bracket orders when stop/profit set
 
 
 @dataclass
@@ -401,15 +406,51 @@ class LiveTradingEngine:
                     logger.info(f"{symbol}: Trade rejected by confirmation callback")
                     return
 
+        # Calculate stop loss and take profit prices
+        safety = self.config.safety
+        stop_loss_price = None
+        take_profit_price = None
+
+        # Use signal's stop/profit if provided, otherwise use safety defaults
+        if signal.stop_loss:
+            stop_loss_price = signal.stop_loss
+        elif safety.stop_loss_pct and signal.action == SignalAction.BUY:
+            stop_loss_price = current_price * Decimal(1 - safety.stop_loss_pct)
+
+        if signal.take_profit:
+            take_profit_price = signal.take_profit
+        elif safety.take_profit_pct and signal.action == SignalAction.BUY:
+            take_profit_price = current_price * Decimal(1 + safety.take_profit_pct)
+
+        # Determine order class
+        use_bracket = (
+            safety.use_bracket_orders
+            and signal.action == SignalAction.BUY  # Only for entry orders
+            and (stop_loss_price or take_profit_price)
+        )
+
         order = Order(
             symbol=symbol,
             side=side,
             quantity=quantity,
             order_type=OrderType.MARKET,
             signal=signal,
+            order_class=OrderClass.BRACKET if use_bracket else OrderClass.SIMPLE,
+            stop_loss_price=stop_loss_price if use_bracket else None,
+            take_profit_price=take_profit_price if use_bracket else None,
         )
 
-        logger.info(f"Executing {side.value} {quantity} {symbol}: {signal.reason}")
+        # Build log message
+        bracket_info = ""
+        if use_bracket:
+            parts = []
+            if stop_loss_price:
+                parts.append(f"SL@${float(stop_loss_price):.2f}")
+            if take_profit_price:
+                parts.append(f"TP@${float(take_profit_price):.2f}")
+            bracket_info = f" [{' '.join(parts)}]"
+
+        logger.info(f"Executing {side.value} {quantity} {symbol}{bracket_info}: {signal.reason}")
 
         result = await self.broker.submit_order(order)
         self.risk_manager.record_trade()
