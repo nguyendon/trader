@@ -115,14 +115,19 @@ def _setup_keyboard_listener() -> tuple[
         try:
             tty.setcbreak(fd)
             while True:
-                # Use run_in_executor for non-blocking read
-                char = await loop.run_in_executor(None, read_char_blocking)
-                if char:
-                    # Lowercase single chars, keep special keys as-is
-                    if len(char) == 1:
-                        await queue.put(char.lower())
-                    else:
-                        await queue.put(char)
+                try:
+                    # Use run_in_executor for non-blocking read
+                    char = await loop.run_in_executor(None, read_char_blocking)
+                    if char:
+                        # Lowercase single chars, keep special keys as-is
+                        if len(char) == 1:
+                            await queue.put(char.lower())
+                        else:
+                            await queue.put(char)
+                except Exception as e:
+                    # Log but don't crash on read errors
+                    logger.debug(f"Keyboard read error: {e}")
+                    await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             pass
         finally:
@@ -251,14 +256,22 @@ class TradingDashboard:
                             while True:
                                 try:
                                     key = key_queue.get_nowait()
-                                    await self._handle_key(key)
+                                    try:
+                                        await self._handle_key(key)
+                                    except Exception as e:
+                                        logger.error(f"Error handling key '{key}': {e}")
+                                        self._status_message = f"Error: {e}"
                                 except asyncio.QueueEmpty:
                                     break
 
                         # Update data at refresh_rate interval
                         now = time.time()
                         if now - last_update >= self.refresh_rate:
-                            live.update(await self._generate_layout_async())
+                            try:
+                                live.update(await self._generate_layout_async())
+                            except Exception as e:
+                                logger.error(f"Error updating layout: {e}")
+                                self._status_message = f"Update error: {e}"
                             last_update = now
 
                         # Short sleep to be responsive to keys
@@ -266,7 +279,8 @@ class TradingDashboard:
                     except asyncio.CancelledError:
                         break
                     except Exception as e:
-                        # Log error but keep running
+                        # Log error and stop
+                        logger.error(f"Dashboard error: {e}")
                         self._running = False
                         raise e
         finally:
