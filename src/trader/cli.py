@@ -36,7 +36,18 @@ def main_callback() -> None:
 STOCK_GROUPS = {
     "mag7": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"],
     "faang": ["META", "AAPL", "AMZN", "NFLX", "GOOGL"],
-    "tech": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AMD", "INTC", "CRM"],
+    "tech": [
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "AMZN",
+        "NVDA",
+        "META",
+        "TSLA",
+        "AMD",
+        "INTC",
+        "CRM",
+    ],
     "finance": ["JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW"],
     "healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "TMO", "ABT", "LLY"],
 }
@@ -45,13 +56,17 @@ STOCK_GROUPS = {
 @app.command()
 def backtest(
     symbol: str = typer.Argument(..., help="Stock symbol to backtest (e.g., AAPL)"),
-    strategy: str = typer.Option("sma", "--strategy", "-S", help="Strategy: sma, rsi, macd, momentum"),
+    strategy: str = typer.Option(
+        "sma", "--strategy", "-S", help="Strategy: sma, rsi, macd, momentum"
+    ),
     days: int = typer.Option(365, "--days", "-d", help="Number of days of history"),
     fast_period: int = typer.Option(10, "--fast", "-f", help="Fast SMA/MACD period"),
     slow_period: int = typer.Option(50, "--slow", "-s", help="Slow SMA/MACD period"),
     capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
     commission: float = typer.Option(0.0, "--commission", help="Commission per trade"),
-    save: bool = typer.Option(True, "--save/--no-save", help="Save results to database"),
+    save: bool = typer.Option(
+        True, "--save/--no-save", help="Save results to database"
+    ),
 ) -> None:
     """Run a backtest with a trading strategy."""
     asyncio.run(
@@ -76,7 +91,9 @@ def scan_stocks(
     ),
     strategy: str = typer.Option("sma", "--strategy", "-S", help="Strategy to test"),
     days: int = typer.Option(365, "--days", "-d", help="Number of days of history"),
-    sort_by: str = typer.Option("sharpe", "--sort", help="Sort by: sharpe, return, drawdown"),
+    sort_by: str = typer.Option(
+        "sharpe", "--sort", help="Sort by: sharpe, return, drawdown"
+    ),
 ) -> None:
     """Backtest a strategy across multiple stocks and show comparison."""
     # Parse symbols - could be a group name or comma-separated list
@@ -136,11 +153,13 @@ async def _run_scan(
                 )
 
                 if len(data) < strategy.min_bars_required:
-                    results.append({
-                        "symbol": symbol,
-                        "status": "skip",
-                        "reason": "Not enough data",
-                    })
+                    results.append(
+                        {
+                            "symbol": symbol,
+                            "status": "skip",
+                            "reason": "Not enough data",
+                        }
+                    )
                     continue
 
                 # Run backtest
@@ -152,22 +171,26 @@ async def _run_scan(
                 )
 
                 summary = result.summary()
-                results.append({
-                    "symbol": symbol,
-                    "status": "ok",
-                    "return_pct": summary["total_return_pct"],
-                    "sharpe": summary["sharpe_ratio"],
-                    "max_dd": summary["max_drawdown_pct"],
-                    "trades": summary["num_trades"],
-                    "win_rate": summary["win_rate"],
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "status": "ok",
+                        "return_pct": summary["total_return_pct"],
+                        "sharpe": summary["sharpe_ratio"],
+                        "max_dd": summary["max_drawdown_pct"],
+                        "trades": summary["num_trades"],
+                        "win_rate": summary["win_rate"],
+                    }
+                )
 
             except Exception as e:
-                results.append({
-                    "symbol": symbol,
-                    "status": "error",
-                    "reason": str(e)[:30],
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "status": "error",
+                        "reason": str(e)[:30],
+                    }
+                )
 
     # Filter successful results
     ok_results = [r for r in results if r["status"] == "ok"]
@@ -245,12 +268,16 @@ async def _run_scan(
 
     console.print("\n[bold]Summary:[/bold]")
     console.print(f"  Stocks tested: {len(ok_results)}")
-    console.print(f"  Profitable: {winners}/{len(ok_results)} ({100*winners/len(ok_results):.0f}%)")
+    console.print(
+        f"  Profitable: {winners}/{len(ok_results)} ({100 * winners / len(ok_results):.0f}%)"
+    )
     console.print(f"  Avg Return: {avg_return:+.1f}%")
     console.print(f"  Avg Sharpe: {avg_sharpe:.2f}")
 
     if failed_results:
-        console.print(f"\n[dim]Skipped: {', '.join(r['symbol'] for r in failed_results)}[/dim]")
+        console.print(
+            f"\n[dim]Skipped: {', '.join(r['symbol'] for r in failed_results)}[/dim]"
+        )
 
     console.print()
 
@@ -271,9 +298,13 @@ async def _run_backtest(
     # Create strategy based on name
     try:
         if strategy_name.lower() == "sma":
-            strategy = get_strategy("sma", fast_period=fast_period, slow_period=slow_period)
+            strategy = get_strategy(
+                "sma", fast_period=fast_period, slow_period=slow_period
+            )
         elif strategy_name.lower() == "macd":
-            strategy = get_strategy("macd", fast_period=fast_period, slow_period=slow_period)
+            strategy = get_strategy(
+                "macd", fast_period=fast_period, slow_period=slow_period
+            )
         elif strategy_name.lower() == "rsi":
             strategy = get_strategy("rsi")
         elif strategy_name.lower() == "momentum":
@@ -664,7 +695,9 @@ async def _run_screen(
     try:
         from finvizfinance.screener.overview import Overview
     except ImportError:
-        console.print("[red]finvizfinance not installed. Run: uv add finvizfinance[/red]")
+        console.print(
+            "[red]finvizfinance not installed. Run: uv add finvizfinance[/red]"
+        )
         raise typer.Exit(1) from None
 
     with console.status("[bold green]Screening stocks (this may take a minute)..."):
@@ -683,7 +716,11 @@ async def _run_screen(
     df_limited = df_sorted.head(limit)
 
     # Display screener results
-    table = Table(title=f"Top {limit} Screener Results", show_header=True, header_style="bold cyan")
+    table = Table(
+        title=f"Top {limit} Screener Results",
+        show_header=True,
+        header_style="bold cyan",
+    )
     table.add_column("Ticker", style="bold")
     table.add_column("Price", justify="right")
     table.add_column("Change", justify="right")
@@ -695,7 +732,9 @@ async def _run_screen(
         if change is None:
             change = 0
         if isinstance(change, str):
-            change = float(change.replace("%", "")) / 100 if "%" in change else float(change)
+            change = (
+                float(change.replace("%", "")) / 100 if "%" in change else float(change)
+            )
 
         if change >= 0.05:
             change_str = f"[green]+{change:.1%}[/green]"
@@ -706,9 +745,9 @@ async def _run_screen(
 
         volume = row.get("Volume", 0)
         if volume >= 1_000_000:
-            vol_str = f"{volume/1_000_000:.1f}M"
+            vol_str = f"{volume / 1_000_000:.1f}M"
         elif volume >= 1_000:
-            vol_str = f"{volume/1_000:.0f}K"
+            vol_str = f"{volume / 1_000:.0f}K"
         else:
             vol_str = str(int(volume))
 
@@ -728,7 +767,9 @@ async def _run_screen(
 
     # If scan strategy requested, run backtests
     if scan_strategy:
-        console.print(f"\n[bold]Running {scan_strategy.upper()} backtest on screened stocks...[/bold]\n")
+        console.print(
+            f"\n[bold]Running {scan_strategy.upper()} backtest on screened stocks...[/bold]\n"
+        )
         await _run_scan(
             symbols=tickers,
             strategy_name=scan_strategy,
@@ -754,7 +795,9 @@ def list_screen_presets() -> None:
         table.add_row(name, config["description"], filters_str)
 
     console.print(table)
-    console.print("\n[dim]Usage: trader screen <preset> [--limit N] [--scan STRATEGY][/dim]")
+    console.print(
+        "\n[dim]Usage: trader screen <preset> [--limit N] [--scan STRATEGY][/dim]"
+    )
     console.print("[dim]Example: trader screen momentum --scan rsi --days 180[/dim]\n")
 
 
@@ -777,9 +820,7 @@ def strategies() -> None:
 
 @app.command("multi")
 def multi_strategy(
-    symbols: str = typer.Argument(
-        "AAPL,MSFT", help="Comma-separated symbols to trade"
-    ),
+    symbols: str = typer.Argument("AAPL,MSFT", help="Comma-separated symbols to trade"),
     strategies_list: str = typer.Option(
         "sma,rsi,momentum",
         "--strategies",
@@ -850,7 +891,9 @@ async def _run_multi_strategy(
         console.print(f"[red]Error creating strategy group: {e}[/red]")
         raise typer.Exit(1) from None
 
-    console.print(f"[green]Initialized {len(processor.strategy_names)} strategies[/green]")
+    console.print(
+        f"[green]Initialized {len(processor.strategy_names)} strategies[/green]"
+    )
 
     # Create components
     broker = PaperBroker(initial_capital=capital)
@@ -882,13 +925,16 @@ async def _run_multi_strategy(
             for _ in range(99):
                 prices.append(prices[-1] * (1 + random.uniform(-0.02, 0.02)))
 
-            data = pd.DataFrame({
-                "open": prices,
-                "high": [p * 1.01 for p in prices],
-                "low": [p * 0.99 for p in prices],
-                "close": prices,
-                "volume": [1000000] * 100,
-            }, index=dates)
+            data = pd.DataFrame(
+                {
+                    "open": prices,
+                    "high": [p * 1.01 for p in prices],
+                    "low": [p * 0.99 for p in prices],
+                    "close": prices,
+                    "volume": [1000000] * 100,
+                },
+                index=dates,
+            )
 
             # Process symbol with multi-strategy
             signal = processor.process_symbol(data, symbol, position=None)
@@ -901,12 +947,16 @@ async def _run_multi_strategy(
             }[signal.action.value]
 
             console.print(f"[bold]{symbol}[/bold]:")
-            console.print(f"  Action: [{action_color}]{signal.action.value.upper()}[/{action_color}]")
+            console.print(
+                f"  Action: [{action_color}]{signal.action.value.upper()}[/{action_color}]"
+            )
             console.print(f"  Confidence: {signal.confidence:.1%}")
             console.print(f"  Reason: {signal.reason}")
             if "scores" in signal.metadata:
                 scores = signal.metadata["scores"]
-                console.print(f"  Scores: BUY={scores['buy']:.2f}, SELL={scores['sell']:.2f}, HOLD={scores['hold']:.2f}")
+                console.print(
+                    f"  Scores: BUY={scores['buy']:.2f}, SELL={scores['sell']:.2f}, HOLD={scores['hold']:.2f}"
+                )
             console.print()
 
         await broker.disconnect()
@@ -921,7 +971,9 @@ async def _run_multi_strategy(
 
 @app.command("runs")
 def list_runs(
-    strategy: str | None = typer.Option(None, "--strategy", "-S", help="Filter by strategy"),
+    strategy: str | None = typer.Option(
+        None, "--strategy", "-S", help="Filter by strategy"
+    ),
     symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
     limit: int = typer.Option(20, "--limit", "-l", help="Number of runs to show"),
 ) -> None:
@@ -936,7 +988,9 @@ def list_runs(
         console.print("[dim]Run a backtest first: trader backtest AAPL[/dim]")
         return
 
-    console.print(f"\n[bold blue]Recent Backtest Runs[/bold blue] ({len(runs)} results)\n")
+    console.print(
+        f"\n[bold blue]Recent Backtest Runs[/bold blue] ({len(runs)} results)\n"
+    )
 
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Run ID", style="dim")
@@ -966,7 +1020,9 @@ def list_runs(
             sharpe_str = f"[red]{sharpe:.2f}[/red]"
 
         # Truncate run_id for display
-        run_id_short = run["run_id"][:25] + "..." if len(run["run_id"]) > 28 else run["run_id"]
+        run_id_short = (
+            run["run_id"][:25] + "..." if len(run["run_id"]) > 28 else run["run_id"]
+        )
 
         table.add_row(
             run_id_short,
@@ -1042,7 +1098,9 @@ def list_trades(
         console.print(f"  Total trades: {stats['total_trades']}")
         console.print(f"  Win rate: {stats['win_rate']:.1f}%")
         console.print(f"  Total P&L: ${stats['total_pnl']:,.2f}")
-        console.print(f"  Avg P&L: ${stats['avg_pnl']:,.2f} ({stats['avg_pnl_pct']:.1f}%)")
+        console.print(
+            f"  Avg P&L: ${stats['avg_pnl']:,.2f} ({stats['avg_pnl_pct']:.1f}%)"
+        )
         console.print(f"  Best trade: ${stats['best_trade']:,.2f}")
         console.print(f"  Worst trade: ${stats['worst_trade']:,.2f}")
 
@@ -1099,10 +1157,16 @@ def intraday_scan(
         help="Comma-separated symbols or group name (mag7, faang, tech, finance, healthcare)",
     ),
     hours: float = typer.Option(3.0, "--hours", "-H", help="Lookback period in hours"),
-    date: str | None = typer.Option(None, "--date", "-D", help="Date to scan (YYYY-MM-DD), default: today"),
+    date: str | None = typer.Option(
+        None, "--date", "-D", help="Date to scan (YYYY-MM-DD), default: today"
+    ),
     start_time: str = typer.Option("09:30", "--start", help="Start time in ET (HH:MM)"),
-    end_time: str | None = typer.Option(None, "--end", help="End time in ET (HH:MM), default: start + hours"),
-    min_change: float = typer.Option(0.0, "--min-change", "-m", help="Minimum % change to show"),
+    end_time: str | None = typer.Option(
+        None, "--end", help="End time in ET (HH:MM), default: start + hours"
+    ),
+    min_change: float = typer.Option(
+        0.0, "--min-change", "-m", help="Minimum % change to show"
+    ),
     sort_by: str = typer.Option("change", "--sort", help="Sort by: change, volume"),
     limit: int = typer.Option(20, "--limit", "-l", help="Max results to show"),
 ) -> None:
@@ -1124,7 +1188,9 @@ def intraday_scan(
         console.print(f"\n[bold blue]Intraday Scan: {symbols.upper()}[/bold blue]")
     else:
         symbol_list = [s.strip().upper() for s in symbols.split(",")]
-        console.print(f"\n[bold blue]Intraday Scan: {len(symbol_list)} stocks[/bold blue]")
+        console.print(
+            f"\n[bold blue]Intraday Scan: {len(symbol_list)} stocks[/bold blue]"
+        )
 
     asyncio.run(
         _run_intraday_scan(
@@ -1156,7 +1222,9 @@ async def _run_intraday_scan(
     settings = get_settings()
 
     if not settings.has_alpaca_credentials:
-        console.print("[red]Error: Intraday scanning requires Alpaca API credentials.[/red]")
+        console.print(
+            "[red]Error: Intraday scanning requires Alpaca API credentials.[/red]"
+        )
         console.print("[dim]Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env[/dim]")
         raise typer.Exit(1)
 
@@ -1171,7 +1239,9 @@ async def _run_intraday_scan(
         try:
             base_date = datetime.strptime(scan_date, "%Y-%m-%d")
         except ValueError:
-            console.print(f"[red]Invalid date format: {scan_date}. Use YYYY-MM-DD[/red]")
+            console.print(
+                f"[red]Invalid date format: {scan_date}. Use YYYY-MM-DD[/red]"
+            )
             raise typer.Exit(1) from None
     else:
         base_date = datetime.now()
@@ -1185,8 +1255,7 @@ async def _run_intraday_scan(
 
     # Build start datetime in ET, then convert to UTC
     start_et = datetime(
-        base_date.year, base_date.month, base_date.day,
-        start_hour, start_min, tzinfo=et
+        base_date.year, base_date.month, base_date.day, start_hour, start_min, tzinfo=et
     )
 
     # Calculate end time
@@ -1194,8 +1263,12 @@ async def _run_intraday_scan(
         try:
             end_hour, end_min = map(int, end_time_str.split(":"))
             end_et = datetime(
-                base_date.year, base_date.month, base_date.day,
-                end_hour, end_min, tzinfo=et
+                base_date.year,
+                base_date.month,
+                base_date.day,
+                end_hour,
+                end_min,
+                tzinfo=et,
             )
         except ValueError:
             console.print(f"[red]Invalid end time: {end_time_str}. Use HH:MM[/red]")
@@ -1207,7 +1280,9 @@ async def _run_intraday_scan(
     start_time = start_et.astimezone(utc)
     end_time = end_et.astimezone(utc)
 
-    console.print(f"Period: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET")
+    console.print(
+        f"Period: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET"
+    )
     console.print(f"Min change: {min_change}%\n")
 
     results: list[dict] = []
@@ -1240,23 +1315,29 @@ async def _run_intraday_scan(
                 low = data["low"].min()
                 range_pct = ((high - low) / low) * 100
 
-                results.append({
-                    "symbol": symbol,
-                    "change_pct": change_pct,
-                    "first_price": first_price,
-                    "last_price": last_price,
-                    "volume": total_volume,
-                    "range_pct": range_pct,
-                    "bars": len(data),
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "change_pct": change_pct,
+                        "first_price": first_price,
+                        "last_price": last_price,
+                        "volume": total_volume,
+                        "range_pct": range_pct,
+                        "bars": len(data),
+                    }
+                )
 
             except Exception as e:
                 logger.debug(f"Error fetching {symbol}: {e}")
                 continue
 
     if not results:
-        console.print("[yellow]No data available. Market may be closed or holiday.[/yellow]")
-        console.print(f"[dim]Requested: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]")
+        console.print(
+            "[yellow]No data available. Market may be closed or holiday.[/yellow]"
+        )
+        console.print(
+            f"[dim]Requested: {start_et.strftime('%Y-%m-%d %H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]"
+        )
         console.print("[dim]US market hours: 9:30 AM - 4:00 PM ET, Mon-Fri[/dim]")
         return
 
@@ -1304,9 +1385,9 @@ async def _run_intraday_scan(
         # Format volume
         vol = r["volume"]
         if vol >= 1_000_000:
-            vol_str = f"{vol/1_000_000:.1f}M"
+            vol_str = f"{vol / 1_000_000:.1f}M"
         elif vol >= 1_000:
-            vol_str = f"{vol/1_000:.0f}K"
+            vol_str = f"{vol / 1_000:.0f}K"
         else:
             vol_str = str(int(vol))
 
@@ -1325,8 +1406,12 @@ async def _run_intraday_scan(
     losers = len(results) - gainers
     avg_change = sum(r["change_pct"] for r in results) / len(results)
 
-    console.print(f"\n[dim]Gainers: {gainers} | Losers: {losers} | Avg: {avg_change:+.2f}%[/dim]")
-    console.print(f"[dim]Data from {start_et.strftime('%H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]\n")
+    console.print(
+        f"\n[dim]Gainers: {gainers} | Losers: {losers} | Avg: {avg_change:+.2f}%[/dim]"
+    )
+    console.print(
+        f"[dim]Data from {start_et.strftime('%H:%M')} to {end_et.strftime('%H:%M')} ET[/dim]\n"
+    )
 
 
 @app.command("live")
@@ -1348,9 +1433,7 @@ def live_trading(
     max_daily_loss: float = typer.Option(
         500.0, "--max-daily-loss", help="Stop trading if daily loss exceeds"
     ),
-    max_trades: int = typer.Option(
-        20, "--max-trades", help="Max trades per day"
-    ),
+    max_trades: int = typer.Option(20, "--max-trades", help="Max trades per day"),
     stop_loss: float | None = typer.Option(
         None, "--stop-loss", "-sl", help="Stop loss % (e.g., 5 for 5%)"
     ),
@@ -1433,7 +1516,9 @@ async def _run_live_trading(
 
     # Check for Alpaca credentials
     if not settings.has_alpaca_credentials:
-        console.print("[red]Error: Alpaca API credentials required for live trading.[/red]")
+        console.print(
+            "[red]Error: Alpaca API credentials required for live trading.[/red]"
+        )
         console.print("\nSet environment variables or create .env file:")
         console.print("  ALPACA_API_KEY=your_key")
         console.print("  ALPACA_SECRET_KEY=your_secret")
@@ -1529,6 +1614,7 @@ async def _run_live_trading(
     notifier = None
     if settings.discord_webhook_url:
         from trader.notifications import DiscordNotifier
+
         notifier = DiscordNotifier(settings.discord_webhook_url)
         console.print("[dim]Discord notifications enabled[/dim]")
 
@@ -1635,9 +1721,13 @@ async def _show_trading_status() -> None:
             console.print(table)
 
             if total_pnl >= 0:
-                console.print(f"\n[bold]Total Unrealized P&L: [green]+${total_pnl:,.2f}[/green][/bold]")
+                console.print(
+                    f"\n[bold]Total Unrealized P&L: [green]+${total_pnl:,.2f}[/green][/bold]"
+                )
             else:
-                console.print(f"\n[bold]Total Unrealized P&L: [red]-${abs(total_pnl):,.2f}[/red][/bold]")
+                console.print(
+                    f"\n[bold]Total Unrealized P&L: [red]-${abs(total_pnl):,.2f}[/red][/bold]"
+                )
         else:
             console.print("\n[dim]No open positions[/dim]")
 
@@ -1680,7 +1770,9 @@ def show_config(
 
     if init:
         if DEFAULT_CONFIG_PATH.exists():
-            console.print(f"[yellow]Config already exists at {DEFAULT_CONFIG_PATH}[/yellow]")
+            console.print(
+                f"[yellow]Config already exists at {DEFAULT_CONFIG_PATH}[/yellow]"
+            )
             console.print("[dim]Delete it first if you want to recreate[/dim]")
             return
 
@@ -1711,7 +1803,12 @@ def show_config(
             params = ", ".join(f"{k}={v}" for k, v in list(s.params.items())[:2])
             if len(s.params) > 2:
                 params += "..."
-            table.add_row(s.name, status, symbols or "[dim]default[/dim]", params or "[dim]default[/dim]")
+            table.add_row(
+                s.name,
+                status,
+                symbols or "[dim]default[/dim]",
+                params or "[dim]default[/dim]",
+            )
 
         console.print(table)
     else:
@@ -1734,8 +1831,10 @@ def show_config(
     if config.watchlists:
         console.print("\n[bold]Watchlists:[/bold]")
         for w in config.watchlists:
-            console.print(f"  {w.name}: {', '.join(w.symbols[:5])}" +
-                         (f" (+{len(w.symbols) - 5})" if len(w.symbols) > 5 else ""))
+            console.print(
+                f"  {w.name}: {', '.join(w.symbols[:5])}"
+                + (f" (+{len(w.symbols) - 5})" if len(w.symbols) > 5 else "")
+            )
 
     console.print()
 
@@ -1743,7 +1842,9 @@ def show_config(
 @app.command("config-run")
 def run_from_config(
     strategy_name: str = typer.Argument(..., help="Strategy name from config"),
-    days: int | None = typer.Option(None, "--days", "-d", help="Override days from config"),
+    days: int | None = typer.Option(
+        None, "--days", "-d", help="Override days from config"
+    ),
 ) -> None:
     """Run backtest using settings from config file."""
     from trader.config.strategy_config import load_config
@@ -1758,7 +1859,9 @@ def run_from_config(
         raise typer.Exit(1)
 
     if not strategy_config.enabled:
-        console.print(f"[yellow]Strategy '{strategy_name}' is disabled in config[/yellow]")
+        console.print(
+            f"[yellow]Strategy '{strategy_name}' is disabled in config[/yellow]"
+        )
         console.print("[dim]Set enabled: true in config to enable[/dim]")
         raise typer.Exit(1)
 
@@ -1830,12 +1933,14 @@ async def _run_config_backtest(
                 store.save_backtest(result)
 
                 summary = result.summary()
-                results.append({
-                    "symbol": symbol,
-                    "return_pct": summary["total_return_pct"],
-                    "sharpe": summary["sharpe_ratio"],
-                    "trades": summary["num_trades"],
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "return_pct": summary["total_return_pct"],
+                        "sharpe": summary["sharpe_ratio"],
+                        "trades": summary["num_trades"],
+                    }
+                )
 
             except Exception as e:
                 logger.debug(f"Error backtesting {symbol}: {e}")
@@ -1845,7 +1950,9 @@ async def _run_config_backtest(
         return
 
     # Display results
-    table = Table(title=f"{strategy_name} Results", show_header=True, header_style="bold cyan")
+    table = Table(
+        title=f"{strategy_name} Results", show_header=True, header_style="bold cyan"
+    )
     table.add_column("Symbol")
     table.add_column("Return", justify="right")
     table.add_column("Sharpe", justify="right")
@@ -1853,13 +1960,17 @@ async def _run_config_backtest(
 
     for r in results:
         ret = r["return_pct"]
-        ret_str = f"[green]+{ret:.1f}%[/green]" if ret >= 0 else f"[red]{ret:.1f}%[/red]"
+        ret_str = (
+            f"[green]+{ret:.1f}%[/green]" if ret >= 0 else f"[red]{ret:.1f}%[/red]"
+        )
         table.add_row(r["symbol"], ret_str, f"{r['sharpe']:.2f}", str(r["trades"]))
 
     console.print(table)
 
     avg_return = sum(r["return_pct"] for r in results) / len(results)
-    console.print(f"\n[dim]Avg return: {avg_return:+.1f}% across {len(results)} symbols[/dim]\n")
+    console.print(
+        f"\n[dim]Avg return: {avg_return:+.1f}% across {len(results)} symbols[/dim]\n"
+    )
 
 
 @app.command("report")
@@ -1958,7 +2069,9 @@ def export_trades(
     if daily:
         count = store.export_daily_pnl_csv(output, days or 365)
         if count > 0:
-            console.print(f"[green]Exported {count} daily P&L records to {output}[/green]")
+            console.print(
+                f"[green]Exported {count} daily P&L records to {output}[/green]"
+            )
         else:
             console.print("[yellow]No records to export[/yellow]")
     else:
@@ -2031,7 +2144,9 @@ def show_pnl(
 @app.command("live-trades")
 def list_live_trades(
     symbol: str | None = typer.Option(None, "--symbol", help="Filter by symbol"),
-    status: str = typer.Option("all", "--status", "-s", help="Filter: open, closed, all"),
+    status: str = typer.Option(
+        "all", "--status", "-s", help="Filter: open, closed, all"
+    ),
     days: int | None = typer.Option(None, "--days", "-d", help="Filter to last N days"),
     limit: int = typer.Option(20, "--limit", "-l", help="Max trades to show"),
 ) -> None:
@@ -2108,7 +2223,10 @@ def list_live_trades(
 @app.command("notify-test")
 def test_notification(
     webhook: str | None = typer.Option(
-        None, "--webhook", "-w", help="Discord webhook URL (or use DISCORD_WEBHOOK_URL env)"
+        None,
+        "--webhook",
+        "-w",
+        help="Discord webhook URL (or use DISCORD_WEBHOOK_URL env)",
     ),
     message: str = typer.Option(
         "Test notification from Trader Bot", "--message", "-m", help="Test message"
@@ -2351,7 +2469,9 @@ async def _list_positions() -> None:
     # Summary
     pnl_color = "green" if total_pnl >= 0 else "red"
     console.print(f"\n[bold]Total Value:[/bold] ${total_value:,.2f}")
-    console.print(f"[bold]Total P&L:[/bold] [{pnl_color}]${total_pnl:,.2f}[/{pnl_color}]")
+    console.print(
+        f"[bold]Total P&L:[/bold] [{pnl_color}]${total_pnl:,.2f}[/{pnl_color}]"
+    )
 
     await broker.disconnect()
 
@@ -2428,9 +2548,7 @@ def close_position(
     symbol: str = typer.Argument(
         ..., help="Symbol to close (or 'all' to close all positions)"
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Skip confirmation prompt"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ) -> None:
     """Close a position (or all positions with 'all')."""
     asyncio.run(_close_position(symbol, force))
@@ -2517,9 +2635,7 @@ def cancel_order(
     order_id: str = typer.Argument(
         ..., help="Order ID to cancel (or 'all' to cancel all orders)"
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Skip confirmation prompt"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ) -> None:
     """Cancel an order (or all orders with 'all')."""
     asyncio.run(_cancel_order(order_id, force))
@@ -2600,13 +2716,291 @@ async def _cancel_order(order_id: str, force: bool) -> None:
 
 
 # =============================================================================
+# Portfolio Rebalancing Commands
+# =============================================================================
+
+
+@app.command("allocations")
+def show_allocations() -> None:
+    """Show current portfolio allocations."""
+    asyncio.run(_show_allocations())
+
+
+async def _show_allocations() -> None:
+    """Display current portfolio allocations."""
+    from trader.broker.alpaca import AlpacaBroker
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    positions = await broker.get_positions()
+    account_value = await broker.get_account_value()
+    cash = await broker.get_cash()
+
+    mode = "Paper" if broker.is_paper else "Live"
+    console.print(f"\n[bold blue]Portfolio Allocations ({mode})[/bold blue]\n")
+
+    if not positions:
+        console.print("[yellow]No positions. Portfolio is 100% cash.[/yellow]")
+        console.print(f"Cash: ${float(cash):,.2f}")
+        await broker.disconnect()
+        return
+
+    table = Table()
+    table.add_column("Symbol", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_column("Allocation", justify="right")
+    table.add_column("Shares", justify="right")
+
+    total_position_value = 0.0
+    for pos in positions:
+        market_value = float(pos.market_value or 0)
+        total_position_value += market_value
+        allocation = market_value / float(account_value) * 100
+
+        table.add_row(
+            pos.symbol,
+            f"${market_value:,.2f}",
+            f"{allocation:.1f}%",
+            str(pos.quantity),
+        )
+
+    # Add cash row
+    cash_pct = float(cash) / float(account_value) * 100
+    table.add_row(
+        "[dim]CASH[/dim]",
+        f"[dim]${float(cash):,.2f}[/dim]",
+        f"[dim]{cash_pct:.1f}%[/dim]",
+        "[dim]-[/dim]",
+    )
+
+    console.print(table)
+    console.print(f"\n[bold]Total Equity:[/bold] ${float(account_value):,.2f}")
+
+    await broker.disconnect()
+
+
+@app.command("rebalance")
+def rebalance_portfolio(
+    targets: str = typer.Argument(
+        ...,
+        help="Target allocations as SYMBOL:PCT,... (e.g., AAPL:30,MSFT:30,GOOGL:40)",
+    ),
+    drift: float = typer.Option(
+        5.0,
+        "--drift",
+        "-d",
+        help="Drift threshold to trigger rebalance (0.05 = 5%)",
+    ),
+    min_trade: float = typer.Option(
+        100.0, "--min-trade", help="Minimum trade value in dollars"
+    ),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--execute", help="Preview orders without executing"
+    ),
+) -> None:
+    """Rebalance portfolio to target allocations.
+
+    Example: trader rebalance AAPL:30,MSFT:30,GOOGL:40
+    """
+    asyncio.run(
+        _run_rebalance(
+            targets_str=targets,
+            drift_threshold=drift / 100,
+            min_trade_value=min_trade,
+            dry_run=dry_run,
+        )
+    )
+
+
+async def _run_rebalance(
+    targets_str: str,
+    drift_threshold: float,
+    min_trade_value: float,
+    dry_run: bool,
+) -> None:
+    """Execute portfolio rebalance."""
+    from trader.broker.alpaca import AlpacaBroker
+    from trader.portfolio.rebalance import (
+        PortfolioAllocation,
+        RebalanceAction,
+        RebalanceConfig,
+        RebalanceEngine,
+    )
+
+    settings = get_settings()
+
+    if not settings.has_alpaca_credentials:
+        console.print("[red]Error: Alpaca API credentials required.[/red]")
+        raise typer.Exit(1)
+
+    # Parse targets
+    allocations = []
+    for item in targets_str.split(","):
+        parts = item.strip().split(":")
+        if len(parts) != 2:
+            console.print(f"[red]Invalid target format: {item}[/red]")
+            console.print("[dim]Use SYMBOL:PCT format (e.g., AAPL:30)[/dim]")
+            raise typer.Exit(1)
+
+        symbol = parts[0].upper()
+        try:
+            pct = float(parts[1]) / 100
+        except ValueError:
+            console.print(f"[red]Invalid percentage: {parts[1]}[/red]")
+            raise typer.Exit(1) from None
+
+        allocations.append(PortfolioAllocation(symbol=symbol, target_pct=pct))
+
+    # Validate allocations sum to 100%
+    total = sum(a.target_pct for a in allocations)
+    if abs(total - 1.0) > 0.01:
+        console.print(
+            f"[red]Allocations must sum to 100%, got {total * 100:.1f}%[/red]"
+        )
+        raise typer.Exit(1)
+
+    config = RebalanceConfig(
+        allocations=allocations,
+        drift_threshold=drift_threshold,
+        min_trade_value=min_trade_value,
+        dry_run=dry_run,
+    )
+
+    broker = AlpacaBroker(
+        api_key=settings.alpaca_api_key.get_secret_value(),
+        secret_key=settings.alpaca_secret_key.get_secret_value(),
+        paper=settings.alpaca_paper,
+    )
+
+    await broker.connect()
+
+    mode = "Paper" if broker.is_paper else "LIVE"
+    console.print(f"\n[bold blue]Portfolio Rebalance ({mode})[/bold blue]\n")
+
+    # Display target allocations
+    console.print("[bold]Target Allocations:[/bold]")
+    for alloc in config.allocations:
+        console.print(f"  {alloc.symbol}: {alloc.target_pct * 100:.1f}%")
+    console.print(f"\nDrift threshold: {drift_threshold * 100:.1f}%")
+    console.print(f"Min trade value: ${min_trade_value:,.0f}")
+
+    engine = RebalanceEngine(broker, config)
+    result = await engine.calculate_rebalance()
+
+    if not result.needs_rebalance:
+        console.print("\n[green]Portfolio is already balanced![/green]")
+        await broker.disconnect()
+        return
+
+    # Display orders
+    console.print("\n[bold]Rebalance Orders:[/bold]\n")
+
+    table = Table()
+    table.add_column("Symbol", style="bold")
+    table.add_column("Action")
+    table.add_column("Shares", justify="right")
+    table.add_column("Value", justify="right")
+    table.add_column("Current", justify="right")
+    table.add_column("Target", justify="right")
+    table.add_column("Drift", justify="right")
+
+    for order in result.orders:
+        if order.action == RebalanceAction.HOLD:
+            action_str = "[dim]HOLD[/dim]"
+        elif order.action == RebalanceAction.BUY:
+            action_str = "[green]BUY[/green]"
+        else:
+            action_str = "[red]SELL[/red]"
+
+        drift_color = "red" if abs(order.drift_pct) > drift_threshold else "dim"
+
+        table.add_row(
+            order.symbol,
+            action_str,
+            str(order.quantity) if order.quantity > 0 else "-",
+            f"${order.trade_value:,.0f}" if order.trade_value > 0 else "-",
+            f"{order.current_pct * 100:.1f}%",
+            f"{order.target_pct * 100:.1f}%",
+            f"[{drift_color}]{order.drift_pct * 100:+.1f}%[/{drift_color}]",
+        )
+
+    console.print(table)
+    console.print("\n[bold]Summary:[/bold]")
+    console.print(f"  Total buys: ${result.total_buys:,.2f}")
+    console.print(f"  Total sells: ${result.total_sells:,.2f}")
+    console.print(f"  Net cash change: ${result.net_cash_change:,.2f}")
+
+    if dry_run:
+        console.print("\n[yellow]Dry run mode - no orders executed.[/yellow]")
+        console.print("[dim]Use --execute to place orders.[/dim]")
+    else:
+        if not typer.confirm("\nExecute these orders?"):
+            console.print("Cancelled.")
+            await broker.disconnect()
+            return
+
+        result = await engine.execute_rebalance(result)
+
+        if result.executed:
+            console.print("\n[green]Rebalance executed successfully![/green]")
+        else:
+            console.print("\n[red]Rebalance failed:[/red]")
+            for error in result.errors:
+                console.print(f"  - {error}")
+
+    await broker.disconnect()
+
+
+@app.command("rebalance-equal")
+def rebalance_equal(
+    symbols: str = typer.Argument(
+        ..., help="Comma-separated symbols (e.g., AAPL,MSFT,GOOGL)"
+    ),
+    drift: float = typer.Option(5.0, "--drift", "-d", help="Drift threshold (%)"),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--execute", help="Preview without executing"
+    ),
+) -> None:
+    """Rebalance to equal weight allocation.
+
+    Example: trader rebalance-equal AAPL,MSFT,GOOGL
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",")]
+    weight = 100 / len(symbol_list)
+    targets = ",".join(f"{s}:{weight:.2f}" for s in symbol_list)
+
+    asyncio.run(
+        _run_rebalance(
+            targets_str=targets,
+            drift_threshold=drift / 100,
+            min_trade_value=100.0,
+            dry_run=dry_run,
+        )
+    )
+
+
+# =============================================================================
 # Dashboard Command
 # =============================================================================
 
 
 @app.command("dashboard")
 def dashboard(
-    refresh: float = typer.Option(2.0, "--refresh", "-r", help="Refresh rate in seconds"),
+    refresh: float = typer.Option(
+        2.0, "--refresh", "-r", help="Refresh rate in seconds"
+    ),
 ) -> None:
     """Launch real-time trading dashboard with live updates."""
     asyncio.run(_run_dashboard(refresh_rate=refresh))
