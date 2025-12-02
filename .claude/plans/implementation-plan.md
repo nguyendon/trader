@@ -97,49 +97,49 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 
 ---
 
-## Phase 3: Position Management & Dashboard 🔄
+## Phase 3: Position Management & Dashboard ✅
 
-### 3.1 Position Management Commands (Next)
-- [ ] `trader positions` - List all open positions with P&L
-- [ ] `trader close AAPL` - Close a specific position
-- [ ] `trader close --all` - Close all positions
-- [ ] `trader orders` - List open orders
-- [ ] `trader cancel <order-id>` - Cancel specific order
-- [ ] `trader cancel --all` - Cancel all open orders
-- [ ] `trader account` - Show account summary (equity, buying power, etc.)
+### 3.1 Position Management Commands ✅
+- [x] `trader positions` - List all open positions with P&L
+- [x] `trader close AAPL` - Close a specific position
+- [x] `trader close all` - Close all positions
+- [x] `trader orders` - List open orders
+- [x] `trader cancel <order-id>` - Cancel specific order
+- [x] `trader cancel all` - Cancel all open orders
+- [x] `trader account` - Show account summary (equity, buying power, etc.)
 
-### 3.2 Performance Dashboard
-- [ ] Rich terminal UI with live updates
-- [ ] Real-time P&L display
-- [ ] Open positions table
-- [ ] Recent trades list
-- [ ] Account equity chart (sparkline)
-- [ ] Strategy performance metrics
-- [ ] Keyboard shortcuts for quick actions
+### 3.2 Performance Dashboard ✅
+- [x] Rich terminal UI with live updates
+- [x] Real-time P&L display
+- [x] Open positions table
+- [x] Recent trades list
+- [x] Account equity chart (sparkline)
+- [x] Strategy performance metrics
+- [x] Keyboard shortcuts for quick actions
 
-### 3.3 Multi-Strategy Support
-- [ ] Run multiple strategies simultaneously
-- [ ] Strategy-per-symbol configuration
-- [ ] Strategy performance comparison
-- [ ] CLI: `trader live AAPL:sma,MSFT:momentum`
-- [ ] Strategy allocation weights
+### 3.3 Multi-Strategy Support ✅
+- [x] Run multiple strategies simultaneously
+- [x] Strategy-per-symbol configuration
+- [x] Strategy performance comparison
+- [x] CLI: `trader live AAPL:sma,MSFT:momentum`
+- [x] Strategy allocation weights
 
 ---
 
 ## Phase 4: Portfolio Management 📊
 
-### 4.1 Portfolio Rebalancing
-- [ ] Target allocation configuration (e.g., AAPL: 30%, MSFT: 20%)
-- [ ] Automatic rebalancing on schedule
-- [ ] Rebalancing threshold (e.g., rebalance if >5% drift)
+### 4.1 Portfolio Rebalancing ✅
+- [x] Target allocation configuration (e.g., AAPL: 30%, MSFT: 20%)
+- [x] Automatic rebalancing on schedule
+- [x] Rebalancing threshold (e.g., rebalance if >5% drift)
 - [ ] Tax-aware rebalancing (minimize short-term gains)
-- [ ] CLI: `trader rebalance --dry-run`
-- [ ] CLI: `trader allocations` - Show current vs target
+- [x] CLI: `trader rebalance --dry-run`
+- [x] CLI: `trader allocations` - Show current vs target
 
-### 4.2 Additional Strategies
-- [ ] Bollinger Bands strategy
-- [ ] Mean Reversion strategy
-- [ ] VWAP strategy
+### 4.2 Additional Strategies ✅
+- [x] Bollinger Bands strategy
+- [x] Mean Reversion strategy
+- [x] VWAP strategy
 - [ ] Pairs trading strategy
 - [ ] Custom strategy loader (from file)
 
@@ -151,8 +151,11 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [ ] Maximum drawdown tracking
 - [ ] CLI: `trader risk` - Risk dashboard
 
-### 4.4 Paper Trading History
-- [ ] Track paper trading performance over time
+### 4.4 Session & Trading History Persistence
+- [ ] Persist dashboard session stats to database
+- [ ] Save equity snapshots over time
+- [ ] Track strategy performance across sessions
+- [ ] CLI: `trader sessions` - View past dashboard sessions
 - [ ] Compare paper vs backtest results
 - [ ] Performance charts with matplotlib/plotly
 - [ ] Strategy comparison charts
@@ -220,14 +223,14 @@ trader/
 
 ## Implementation Priority
 
-| Priority | Feature | Phase |
-|----------|---------|-------|
-| 1 | Position management commands | 3.1 |
-| 2 | Performance dashboard | 3.2 |
-| 3 | Multi-strategy support | 3.3 |
-| 4 | Portfolio rebalancing | 4.1 |
-| 5 | More strategies (Bollinger, Mean Reversion, VWAP) | 4.2 |
-| 6 | Risk analytics (VaR, correlation) | 4.3 |
-| 7 | Paper trading history & charts | 4.4 |
-| 8 | True trailing stops (WebSocket) | 5.1 |
-| 9 | Scheduled trading | 5.2 |
+| Priority | Feature | Phase | Status |
+|----------|---------|-------|--------|
+| 1 | Position management commands | 3.1 | ✅ Done |
+| 2 | Performance dashboard | 3.2 | ✅ Done |
+| 3 | Multi-strategy support | 3.3 | ✅ Done |
+| 4 | Portfolio rebalancing | 4.1 | ✅ Done |
+| 5 | More strategies (Bollinger, Mean Reversion, VWAP) | 4.2 | ✅ Done |
+| 6 | Session & history persistence | 4.4 | Next |
+| 7 | Risk analytics (VaR, correlation) | 4.3 | Planned |
+| 8 | True trailing stops (WebSocket) | 5.1 | Planned |
+| 9 | Scheduled trading | 5.2 | Planned |

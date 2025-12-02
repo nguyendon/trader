@@ -197,13 +197,13 @@ class TestTradingDashboard:
         dashboard = TradingDashboard(mock_broker)
         panel = dashboard._make_footer()
 
-        footer_str = str(panel.renderable)
+        footer_str = render_panel_to_str(panel)
         assert "[Q]" in footer_str
-        assert "[R]" in footer_str
+        assert "[P]" in footer_str  # Positions menu
+        assert "[O]" in footer_str  # Orders menu
         assert "[C]" in footer_str
         assert "[X]" in footer_str
-        assert "[H]" in footer_str
-        assert "[S]" in footer_str
+        assert "[?]" in footer_str  # Help
 
     def test_make_footer_with_status(self, mock_broker: MagicMock) -> None:
         """Test footer shows status message."""
@@ -438,3 +438,150 @@ class TestTradingDashboard:
         assert dashboard._winning_trades == 0
         assert len(dashboard._strategy_stats) == 0
         assert "Session stats reset" in dashboard._status_message
+
+    @pytest.mark.asyncio
+    async def test_handle_key_open_positions_menu(self, mock_broker: MagicMock) -> None:
+        """Test opening positions menu."""
+        position = MagicMock()
+        position.symbol = "AAPL"
+        mock_broker.get_positions.return_value = [position]
+        dashboard = TradingDashboard(mock_broker)
+
+        await dashboard._handle_key("p")
+
+        assert dashboard._menu_mode == "positions"
+        assert len(dashboard._menu_items) == 1
+        assert dashboard._selected_index == 0
+
+    @pytest.mark.asyncio
+    async def test_handle_key_open_orders_menu(self, mock_broker: MagicMock) -> None:
+        """Test opening orders menu."""
+        order = MagicMock()
+        order.symbol = "AAPL"
+        mock_broker.get_open_orders.return_value = [order]
+        dashboard = TradingDashboard(mock_broker)
+
+        await dashboard._handle_key("o")
+
+        assert dashboard._menu_mode == "orders"
+        assert len(dashboard._menu_items) == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_key_help(self, mock_broker: MagicMock) -> None:
+        """Test opening help panel."""
+        dashboard = TradingDashboard(mock_broker)
+
+        await dashboard._handle_key("?")
+
+        assert dashboard._menu_mode == "help"
+
+    @pytest.mark.asyncio
+    async def test_menu_navigation(self, mock_broker: MagicMock) -> None:
+        """Test menu navigation with j/k keys."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._menu_mode = "positions"
+        dashboard._menu_items = [MagicMock(), MagicMock(), MagicMock()]
+        dashboard._selected_index = 0
+
+        # Navigate down
+        await dashboard._handle_menu_key("j")
+        assert dashboard._selected_index == 1
+
+        await dashboard._handle_menu_key("j")
+        assert dashboard._selected_index == 2
+
+        # Wrap around
+        await dashboard._handle_menu_key("j")
+        assert dashboard._selected_index == 0
+
+        # Navigate up
+        await dashboard._handle_menu_key("k")
+        assert dashboard._selected_index == 2
+
+    @pytest.mark.asyncio
+    async def test_menu_close_on_escape(self, mock_broker: MagicMock) -> None:
+        """Test closing menu with escape/q."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._menu_mode = "positions"
+        dashboard._menu_items = [MagicMock()]
+
+        await dashboard._handle_menu_key("q")
+
+        assert dashboard._menu_mode is None
+        assert len(dashboard._menu_items) == 0
+
+    @pytest.mark.asyncio
+    async def test_menu_number_selection(self, mock_broker: MagicMock) -> None:
+        """Test direct number selection in menu."""
+        position = MagicMock()
+        position.symbol = "AAPL"
+        position.current_price = Decimal("150.00")
+        mock_broker.close_position.return_value = MagicMock(
+            quantity=100, filled_avg_price=Decimal("150.00")
+        )
+
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._menu_mode = "positions"
+        dashboard._menu_items = [position]
+        dashboard._selected_index = 0
+
+        await dashboard._handle_menu_key("1")
+
+        mock_broker.close_position.assert_called_once_with("AAPL")
+        assert dashboard._menu_mode is None
+
+    def test_make_menu_panel_positions(self, mock_broker: MagicMock) -> None:
+        """Test positions menu panel."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._selected_index = 0
+
+        positions = [
+            Position(
+                symbol="AAPL",
+                quantity=100,
+                avg_entry_price=Decimal("150.00"),
+                current_price=Decimal("155.00"),
+                unrealized_pnl=Decimal("500.00"),
+                unrealized_pnl_pct=0.0333,
+            ),
+        ]
+
+        panel = dashboard._make_menu_panel("positions", positions)
+        panel_str = render_panel_to_str(panel)
+
+        assert "Select Position to Close" in panel_str
+        assert "AAPL" in panel_str
+        assert "►1" in panel_str  # Selected indicator
+
+    def test_make_menu_panel_orders(self, mock_broker: MagicMock) -> None:
+        """Test orders menu panel."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._selected_index = 0
+
+        orders = [
+            Order(
+                symbol="AAPL",
+                side=OrderSide.BUY,
+                quantity=100,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.PENDING,
+            ),
+        ]
+
+        panel = dashboard._make_menu_panel("orders", orders)
+        panel_str = render_panel_to_str(panel)
+
+        assert "Select Order to Cancel" in panel_str
+        assert "AAPL" in panel_str
+
+    def test_make_help_panel(self, mock_broker: MagicMock) -> None:
+        """Test help panel content."""
+        dashboard = TradingDashboard(mock_broker)
+        panel = dashboard._make_help_panel()
+        panel_str = render_panel_to_str(panel)
+
+        assert "Keyboard Shortcuts" in panel_str
+        assert "[Q]" in panel_str
+        assert "[P]" in panel_str
+        assert "[O]" in panel_str
+        assert "Navigate" in panel_str

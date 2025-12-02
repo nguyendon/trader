@@ -144,6 +144,11 @@ class TradingDashboard:
         self._total_trades = 0
         self._winning_trades = 0
 
+        # Interactive menu state
+        self._menu_mode: str | None = None  # None, "positions", "orders", "help"
+        self._menu_items: list = []
+        self._selected_index: int = 0
+
     def add_trade(self, trade: dict) -> None:
         """Add a trade to the recent trades list."""
         self._recent_trades.insert(0, trade)
@@ -229,11 +234,25 @@ class TradingDashboard:
 
     async def _handle_key(self, key: str) -> None:
         """Handle keyboard input."""
+        # Handle menu mode navigation
+        if self._menu_mode:
+            await self._handle_menu_key(key)
+            return
+
         if key == "q":
             self._running = False
             self._status_message = "Quitting..."
         elif key == "r":
             self._status_message = "Refreshing..."
+        elif key == "p":
+            # Open positions menu
+            await self._open_positions_menu()
+        elif key == "o":
+            # Open orders menu
+            await self._open_orders_menu()
+        elif key == "?":
+            # Show help
+            self._menu_mode = "help"
         elif key == "c":
             # Close all positions
             self._status_message = "Closing all positions..."
@@ -282,6 +301,101 @@ class TradingDashboard:
             self._strategy_stats.clear()
             self._session_start = datetime.now(UTC)
             self._status_message = "Session stats reset"
+
+    async def _handle_menu_key(self, key: str) -> None:
+        """Handle keyboard input in menu mode."""
+        if key == "\x1b" or key == "q":  # Escape or Q to close menu
+            self._menu_mode = None
+            self._menu_items = []
+            self._selected_index = 0
+            self._status_message = ""
+        elif key == "?" and self._menu_mode == "help" or self._menu_mode == "help":
+            self._menu_mode = None
+        elif key in ("j", "\x1b[B"):  # j or down arrow
+            if self._menu_items:
+                self._selected_index = (self._selected_index + 1) % len(self._menu_items)
+        elif key in ("k", "\x1b[A"):  # k or up arrow
+            if self._menu_items:
+                self._selected_index = (self._selected_index - 1) % len(self._menu_items)
+        elif key == "\r" or key == "\n":  # Enter to select
+            await self._execute_menu_action()
+        elif key.isdigit():
+            # Direct number selection (1-9)
+            idx = int(key) - 1
+            if 0 <= idx < len(self._menu_items):
+                self._selected_index = idx
+                await self._execute_menu_action()
+
+    async def _open_positions_menu(self) -> None:
+        """Open the positions selection menu."""
+        positions = await self.broker.get_positions()
+        if not positions:
+            self._status_message = "No positions to manage"
+            return
+
+        self._menu_mode = "positions"
+        self._menu_items = positions
+        self._selected_index = 0
+        self._status_message = "Select position to close (↑↓/jk to move, Enter to select, Esc to cancel)"
+
+    async def _open_orders_menu(self) -> None:
+        """Open the orders selection menu."""
+        orders = await self.broker.get_open_orders()
+        if not orders:
+            self._status_message = "No orders to manage"
+            return
+
+        self._menu_mode = "orders"
+        self._menu_items = orders
+        self._selected_index = 0
+        self._status_message = "Select order to cancel (↑↓/jk to move, Enter to select, Esc to cancel)"
+
+    async def _execute_menu_action(self) -> None:
+        """Execute the selected menu action."""
+        if not self._menu_items or self._selected_index >= len(self._menu_items):
+            return
+
+        item = self._menu_items[self._selected_index]
+
+        if self._menu_mode == "positions":
+            # Close the selected position
+            symbol = item.symbol
+            try:
+                order = await self.broker.close_position(symbol)
+                if order:
+                    self._status_message = f"Closed {symbol} position"
+                    self.add_trade(
+                        {
+                            "symbol": symbol,
+                            "side": "sell",
+                            "quantity": order.quantity,
+                            "price": float(order.filled_avg_price or item.current_price or 0),
+                            "time": datetime.now(UTC),
+                        }
+                    )
+                else:
+                    self._status_message = f"Failed to close {symbol}"
+            except Exception as e:
+                self._status_message = f"Error closing {symbol}: {e}"
+                logger.error(f"Failed to close position {symbol}: {e}")
+
+        elif self._menu_mode == "orders":
+            # Cancel the selected order
+            order_id = item.broker_order_id or item.id
+            if order_id:
+                try:
+                    if await self.broker.cancel_order(order_id):
+                        self._status_message = f"Cancelled {item.symbol} order"
+                    else:
+                        self._status_message = "Failed to cancel order"
+                except Exception as e:
+                    self._status_message = f"Error: {e}"
+                    logger.error(f"Failed to cancel order {order_id}: {e}")
+
+        # Close menu after action
+        self._menu_mode = None
+        self._menu_items = []
+        self._selected_index = 0
 
     def stop(self) -> None:
         """Stop the dashboard."""
@@ -366,9 +480,23 @@ class TradingDashboard:
             self._make_account_panel(equity, buying_power, cash, positions)
         )
         layout["stats"].update(self._make_stats_panel())
-        layout["positions"].update(self._make_positions_panel(positions))
-        layout["orders"].update(self._make_orders_panel(orders))
-        layout["trades"].update(self._make_trades_panel())
+
+        # Show menu overlay if in menu mode
+        if self._menu_mode == "positions":
+            layout["positions"].update(self._make_menu_panel("positions", positions))
+        else:
+            layout["positions"].update(self._make_positions_panel(positions))
+
+        if self._menu_mode == "orders":
+            layout["orders"].update(self._make_menu_panel("orders", orders))
+        else:
+            layout["orders"].update(self._make_orders_panel(orders))
+
+        if self._menu_mode == "help":
+            layout["trades"].update(self._make_help_panel())
+        else:
+            layout["trades"].update(self._make_trades_panel())
+
         layout["footer"].update(self._make_footer())
 
         return layout
@@ -389,27 +517,41 @@ class TradingDashboard:
 
     def _make_footer(self) -> Panel:
         """Create footer with keyboard shortcuts."""
-        shortcuts = Text()
-        shortcuts.append("[Q] ", style="bold yellow")
-        shortcuts.append("Quit  ", style="dim")
-        shortcuts.append("[R] ", style="bold yellow")
-        shortcuts.append("Refresh  ", style="dim")
-        shortcuts.append("[C] ", style="bold yellow")
-        shortcuts.append("Close All  ", style="dim")
-        shortcuts.append("[X] ", style="bold yellow")
-        shortcuts.append("Cancel Orders  ", style="dim")
-        shortcuts.append("[H] ", style="bold yellow")
-        shortcuts.append("Clear History  ", style="dim")
-        shortcuts.append("[S] ", style="bold yellow")
-        shortcuts.append("Reset Stats", style="dim")
+        from rich.console import Group
+
+        if self._menu_mode in ("positions", "orders"):
+            # Show menu navigation shortcuts
+            shortcuts = Text()
+            shortcuts.append("[↑↓/jk] ", style="bold yellow")
+            shortcuts.append("Navigate  ", style="dim")
+            shortcuts.append("[Enter/1-9] ", style="bold yellow")
+            shortcuts.append("Select  ", style="dim")
+            shortcuts.append("[Esc/Q] ", style="bold yellow")
+            shortcuts.append("Cancel", style="dim")
+        elif self._menu_mode == "help":
+            shortcuts = Text()
+            shortcuts.append("Press any key to close help", style="dim italic")
+        else:
+            # Normal mode shortcuts
+            shortcuts = Text()
+            shortcuts.append("[Q] ", style="bold yellow")
+            shortcuts.append("Quit  ", style="dim")
+            shortcuts.append("[P] ", style="bold cyan")
+            shortcuts.append("Positions  ", style="dim")
+            shortcuts.append("[O] ", style="bold cyan")
+            shortcuts.append("Orders  ", style="dim")
+            shortcuts.append("[C] ", style="bold yellow")
+            shortcuts.append("Close All  ", style="dim")
+            shortcuts.append("[X] ", style="bold yellow")
+            shortcuts.append("Cancel All  ", style="dim")
+            shortcuts.append("[?] ", style="bold yellow")
+            shortcuts.append("Help", style="dim")
 
         # Show status message if any
         if self._status_message:
             status = Text()
             status.append("  → ", style="dim")
             status.append(self._status_message, style="bold cyan")
-            from rich.console import Group
-
             return Panel(Group(shortcuts, status), style="dim")
 
         return Panel(shortcuts, style="dim")
@@ -634,6 +776,108 @@ class TradingDashboard:
             )
 
         return Panel(table, title="📜 Recent Trades", border_style="magenta")
+
+    def _make_menu_panel(self, menu_type: str, items: list) -> Panel:
+        """Create an interactive selection menu panel."""
+        if menu_type == "positions":
+            title = "📊 Select Position to Close"
+            border_style = "bold cyan"
+        else:
+            title = "📋 Select Order to Cancel"
+            border_style = "bold cyan"
+
+        if not items:
+            return Panel(
+                Text("No items", style="dim italic"),
+                title=title,
+                border_style=border_style,
+            )
+
+        table = Table(box=None, padding=(0, 1), show_header=True)
+        table.add_column("#", style="bold yellow", width=3)
+
+        if menu_type == "positions":
+            table.add_column("Symbol", style="bold")
+            table.add_column("Qty", justify="right")
+            table.add_column("P&L", justify="right")
+            table.add_column("P&L %", justify="right")
+
+            for i, pos in enumerate(items[:9]):  # Max 9 for number keys
+                is_selected = i == self._selected_index
+                prefix = "►" if is_selected else " "
+                row_style = "reverse" if is_selected else ""
+
+                pnl = float(pos.unrealized_pnl or 0)
+                pnl_pct = (pos.unrealized_pnl_pct or 0) * 100
+                pnl_color = "green" if pnl >= 0 else "red"
+
+                table.add_row(
+                    f"{prefix}{i + 1}",
+                    pos.symbol,
+                    str(pos.quantity),
+                    f"[{pnl_color}]${pnl:+,.2f}[/{pnl_color}]",
+                    f"[{pnl_color}]{pnl_pct:+.1f}%[/{pnl_color}]",
+                    style=row_style,
+                )
+        else:
+            table.add_column("Symbol", style="bold")
+            table.add_column("Side")
+            table.add_column("Qty", justify="right")
+            table.add_column("Type")
+
+            for i, order in enumerate(items[:9]):
+                is_selected = i == self._selected_index
+                prefix = "►" if is_selected else " "
+                row_style = "reverse" if is_selected else ""
+
+                side_color = "green" if order.side.value == "buy" else "red"
+                side_str = f"[{side_color}]{order.side.value.upper()}[/{side_color}]"
+
+                table.add_row(
+                    f"{prefix}{i + 1}",
+                    order.symbol,
+                    side_str,
+                    str(order.quantity),
+                    order.order_type.value,
+                    style=row_style,
+                )
+
+        return Panel(table, title=title, border_style=border_style)
+
+    def _make_help_panel(self) -> Panel:
+        """Create help overlay panel."""
+
+        help_text = Text()
+        help_text.append("Keyboard Shortcuts\n\n", style="bold underline")
+
+        shortcuts = [
+            ("Q", "Quit dashboard"),
+            ("R", "Refresh data"),
+            ("P", "Open positions menu (select to close)"),
+            ("O", "Open orders menu (select to cancel)"),
+            ("C", "Close ALL positions"),
+            ("X", "Cancel ALL orders"),
+            ("H", "Clear equity history"),
+            ("S", "Reset session stats"),
+            ("?", "Show this help"),
+        ]
+
+        for key, desc in shortcuts:
+            help_text.append(f"  [{key}]", style="bold yellow")
+            help_text.append(f"  {desc}\n", style="dim")
+
+        help_text.append("\n")
+        help_text.append("In Selection Menus:\n", style="bold underline")
+        help_text.append("  [↑↓/jk]", style="bold yellow")
+        help_text.append("  Navigate up/down\n", style="dim")
+        help_text.append("  [Enter]", style="bold yellow")
+        help_text.append("  Execute action\n", style="dim")
+        help_text.append("  [1-9]", style="bold yellow")
+        help_text.append("  Quick select by number\n", style="dim")
+        help_text.append("  [Esc/Q]", style="bold yellow")
+        help_text.append("  Cancel/close menu\n", style="dim")
+
+        return Panel(help_text, title="❓ Help", border_style="bold blue")
 
 
 async def run_dashboard(broker: BaseBroker, refresh_rate: float = 2.0) -> None:
