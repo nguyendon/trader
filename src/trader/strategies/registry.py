@@ -99,6 +99,55 @@ def _register_builtin_strategies() -> None:
     except ImportError:
         pass
 
+    # Bollinger Bands strategies
+    try:
+        from trader.strategies.builtin.bollinger import (
+            BollingerBandsStrategy,
+            BollingerBreakoutStrategy,
+        )
+
+        register_strategy(
+            "bollinger", BollingerBandsStrategy, {"period": 20, "num_std": 2.0}
+        )
+        register_strategy(
+            "bollinger_breakout",
+            BollingerBreakoutStrategy,
+            {"period": 20, "num_std": 2.0},
+        )
+    except ImportError:
+        pass
+
+    # VWAP strategies
+    try:
+        from trader.strategies.builtin.vwap import VWAPStrategy, VWAPTrendStrategy
+
+        register_strategy(
+            "vwap", VWAPStrategy, {"deviation_pct": 1.0, "use_bands": True}
+        )
+        register_strategy("vwap_trend", VWAPTrendStrategy, {"confirmation_bars": 3})
+    except ImportError:
+        pass
+
+    # Mean Reversion strategies
+    try:
+        from trader.strategies.builtin.mean_reversion import (
+            MeanReversionPairsStrategy,
+            MeanReversionStrategy,
+        )
+
+        register_strategy(
+            "mean_reversion",
+            MeanReversionStrategy,
+            {"lookback": 20, "entry_zscore": 2.0, "exit_zscore": 0.5},
+        )
+        register_strategy(
+            "mean_reversion_channel",
+            MeanReversionPairsStrategy,
+            {"lookback": 20, "entry_pct": 5.0},
+        )
+    except ImportError:
+        pass
+
 
 # Auto-register on import
 _register_builtin_strategies()

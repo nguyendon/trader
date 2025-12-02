@@ -133,14 +133,20 @@ class BaseStrategy(ABC):
         reason: str,
         confidence: float = 1.0,
         quantity: int | None = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
     ) -> Signal:
         """Create a buy signal (convenience method)."""
+        from decimal import Decimal
+
         return Signal(
             action=SignalAction.BUY,
             symbol=symbol,
             reason=reason,
             confidence=confidence,
             quantity=quantity,
+            stop_loss=Decimal(str(stop_loss)) if stop_loss is not None else None,
+            take_profit=Decimal(str(take_profit)) if take_profit is not None else None,
         )
 
     def sell_signal(
@@ -149,12 +155,18 @@ class BaseStrategy(ABC):
         reason: str,
         confidence: float = 1.0,
         quantity: int | None = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
     ) -> Signal:
         """Create a sell signal (convenience method)."""
+        from decimal import Decimal
+
         return Signal(
             action=SignalAction.SELL,
             symbol=symbol,
             reason=reason,
             confidence=confidence,
             quantity=quantity,
+            stop_loss=Decimal(str(stop_loss)) if stop_loss is not None else None,
+            take_profit=Decimal(str(take_profit)) if take_profit is not None else None,
         )
