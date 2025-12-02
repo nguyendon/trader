@@ -6,7 +6,8 @@ import asyncio
 import contextlib
 import sys
 import typing
-from datetime import datetime
+from collections import deque
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,46 @@ from rich.text import Text
 if TYPE_CHECKING:
     from trader.broker.base import BaseBroker
     from trader.core.models import Order, Position
+
+
+# Sparkline characters (block elements for mini chart)
+SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def _make_sparkline(values: list[float], width: int = 20) -> str:
+    """Create a sparkline string from a list of values.
+
+    Args:
+        values: List of numeric values
+        width: Maximum width of sparkline
+
+    Returns:
+        String representation of sparkline
+    """
+    if not values:
+        return ""
+
+    # Take last N values to fit width
+    values = list(values)[-width:]
+
+    if len(values) < 2:
+        return SPARKLINE_CHARS[4] * len(values)
+
+    min_val = min(values)
+    max_val = max(values)
+    val_range = max_val - min_val
+
+    if val_range == 0:
+        return SPARKLINE_CHARS[4] * len(values)
+
+    # Map values to character indices
+    result = []
+    for val in values:
+        normalized = (val - min_val) / val_range
+        char_idx = int(normalized * (len(SPARKLINE_CHARS) - 1))
+        result.append(SPARKLINE_CHARS[char_idx])
+
+    return "".join(result)
 
 
 def _setup_keyboard_listener() -> tuple[
@@ -61,11 +102,16 @@ class TradingDashboard:
 
     Shows:
     - Account summary (equity, P&L, buying power)
+    - Equity sparkline chart
     - Open positions with live P&L
     - Recent trades
     - Open orders
+    - Strategy performance metrics
     - Keyboard shortcuts
     """
+
+    # Maximum history points to keep for sparklines
+    MAX_HISTORY = 60
 
     def __init__(
         self,
@@ -86,11 +132,49 @@ class TradingDashboard:
         self._recent_trades: list[dict] = []
         self._status_message: str = ""
 
+        # History tracking for sparklines
+        self._equity_history: deque[float] = deque(maxlen=self.MAX_HISTORY)
+        self._pnl_history: deque[float] = deque(maxlen=self.MAX_HISTORY)
+
+        # Strategy performance tracking
+        self._strategy_stats: dict[str, dict] = {}
+
+        # Session stats
+        self._session_start = datetime.now(UTC)
+        self._total_trades = 0
+        self._winning_trades = 0
+
     def add_trade(self, trade: dict) -> None:
         """Add a trade to the recent trades list."""
         self._recent_trades.insert(0, trade)
         # Keep only last 10 trades
         self._recent_trades = self._recent_trades[:10]
+
+        # Update session stats
+        self._total_trades += 1
+        pnl = trade.get("pnl", 0)
+        if pnl > 0:
+            self._winning_trades += 1
+
+        # Track strategy performance
+        strategy = trade.get("strategy", "unknown")
+        if strategy not in self._strategy_stats:
+            self._strategy_stats[strategy] = {
+                "trades": 0,
+                "wins": 0,
+                "total_pnl": 0.0,
+            }
+        self._strategy_stats[strategy]["trades"] += 1
+        if pnl > 0:
+            self._strategy_stats[strategy]["wins"] += 1
+        self._strategy_stats[strategy]["total_pnl"] += pnl
+
+    def record_equity(self, equity: Decimal) -> None:
+        """Record equity value for sparkline history."""
+        self._equity_history.append(float(equity))
+        if self._start_equity:
+            pnl = float(equity - self._start_equity)
+            self._pnl_history.append(pnl)
 
     async def run(self) -> None:
         """Run the dashboard with live updates."""
@@ -164,7 +248,7 @@ class TradingDashboard:
                                 "side": "sell",
                                 "quantity": order.quantity,
                                 "price": float(order.filled_avg_price or 0),
-                                "time": datetime.now(),
+                                "time": datetime.now(UTC),
                             }
                         )
                 else:
@@ -172,6 +256,32 @@ class TradingDashboard:
             except Exception as e:
                 self._status_message = f"Error: {e}"
                 logger.error(f"Failed to close positions: {e}")
+        elif key == "x":
+            # Cancel all open orders
+            self._status_message = "Cancelling all orders..."
+            try:
+                orders = await self.broker.get_open_orders()
+                cancelled = 0
+                for order in orders:
+                    if order.id:
+                        await self.broker.cancel_order(order.id)
+                        cancelled += 1
+                self._status_message = f"Cancelled {cancelled} orders"
+            except Exception as e:
+                self._status_message = f"Error: {e}"
+                logger.error(f"Failed to cancel orders: {e}")
+        elif key == "h":
+            # Clear history
+            self._equity_history.clear()
+            self._pnl_history.clear()
+            self._status_message = "History cleared"
+        elif key == "s":
+            # Reset session stats
+            self._total_trades = 0
+            self._winning_trades = 0
+            self._strategy_stats.clear()
+            self._session_start = datetime.now(UTC)
+            self._status_message = "Session stats reset"
 
     def stop(self) -> None:
         """Stop the dashboard."""
@@ -184,7 +294,7 @@ class TradingDashboard:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="body"),
-            Layout(name="footer", size=3),
+            Layout(name="footer", size=4),
         )
 
         layout["body"].split_row(
@@ -193,11 +303,12 @@ class TradingDashboard:
         )
 
         layout["left"].split_column(
-            Layout(name="account", size=10),
+            Layout(name="account", size=12),
             Layout(name="positions"),
         )
 
         layout["right"].split_column(
+            Layout(name="stats", size=8),
             Layout(name="orders", ratio=1),
             Layout(name="trades", ratio=1),
         )
@@ -205,6 +316,7 @@ class TradingDashboard:
         # Set placeholders
         layout["header"].update(self._make_header())
         layout["account"].update(Panel("Loading...", title="Account"))
+        layout["stats"].update(Panel("Loading...", title="Session Stats"))
         layout["positions"].update(Panel("Loading...", title="Positions"))
         layout["orders"].update(Panel("Loading...", title="Open Orders"))
         layout["trades"].update(Panel("Loading...", title="Recent Trades"))
@@ -219,7 +331,7 @@ class TradingDashboard:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="body"),
-            Layout(name="footer", size=3),
+            Layout(name="footer", size=4),
         )
 
         layout["body"].split_row(
@@ -228,11 +340,12 @@ class TradingDashboard:
         )
 
         layout["left"].split_column(
-            Layout(name="account", size=10),
+            Layout(name="account", size=12),
             Layout(name="positions"),
         )
 
         layout["right"].split_column(
+            Layout(name="stats", size=8),
             Layout(name="orders", ratio=1),
             Layout(name="trades", ratio=1),
         )
@@ -244,11 +357,15 @@ class TradingDashboard:
         positions = await self.broker.get_positions()
         orders = await self.broker.get_open_orders()
 
+        # Record equity for sparkline
+        self.record_equity(equity)
+
         # Update panels
         layout["header"].update(self._make_header())
         layout["account"].update(
             self._make_account_panel(equity, buying_power, cash, positions)
         )
+        layout["stats"].update(self._make_stats_panel())
         layout["positions"].update(self._make_positions_panel(positions))
         layout["orders"].update(self._make_orders_panel(orders))
         layout["trades"].update(self._make_trades_panel())
@@ -272,20 +389,30 @@ class TradingDashboard:
 
     def _make_footer(self) -> Panel:
         """Create footer with keyboard shortcuts."""
-        footer_text = Text()
-        footer_text.append("  [Q] ", style="bold yellow")
-        footer_text.append("Quit", style="dim")
-        footer_text.append("  |  [R] ", style="bold yellow")
-        footer_text.append("Refresh", style="dim")
-        footer_text.append("  |  [C] ", style="bold yellow")
-        footer_text.append("Close All", style="dim")
+        shortcuts = Text()
+        shortcuts.append("[Q] ", style="bold yellow")
+        shortcuts.append("Quit  ", style="dim")
+        shortcuts.append("[R] ", style="bold yellow")
+        shortcuts.append("Refresh  ", style="dim")
+        shortcuts.append("[C] ", style="bold yellow")
+        shortcuts.append("Close All  ", style="dim")
+        shortcuts.append("[X] ", style="bold yellow")
+        shortcuts.append("Cancel Orders  ", style="dim")
+        shortcuts.append("[H] ", style="bold yellow")
+        shortcuts.append("Clear History  ", style="dim")
+        shortcuts.append("[S] ", style="bold yellow")
+        shortcuts.append("Reset Stats", style="dim")
 
         # Show status message if any
         if self._status_message:
-            footer_text.append("  |  ", style="dim")
-            footer_text.append(self._status_message, style="bold cyan")
+            status = Text()
+            status.append("  → ", style="dim")
+            status.append(self._status_message, style="bold cyan")
+            from rich.console import Group
 
-        return Panel(footer_text, style="dim")
+            return Panel(Group(shortcuts, status), style="dim")
+
+        return Panel(shortcuts, style="dim")
 
     def _make_account_panel(
         self,
@@ -294,7 +421,9 @@ class TradingDashboard:
         cash: Decimal,
         positions: list[Position],
     ) -> Panel:
-        """Create account summary panel."""
+        """Create account summary panel with sparkline."""
+        from rich.console import Group
+
         table = Table(show_header=False, box=None, padding=(0, 1))
         table.add_column("Label", style="dim", width=14)
         table.add_column("Value", style="bold")
@@ -327,6 +456,28 @@ class TradingDashboard:
         table.add_row("Buying Power", f"${float(buying_power):,.2f}")
         table.add_row("Cash", f"${float(cash):,.2f}")
         table.add_row("Positions", str(len(positions)))
+
+        # Add sparkline if we have history
+        if len(self._equity_history) > 1:
+            sparkline = _make_sparkline(list(self._equity_history), width=30)
+            # Determine color based on trend
+            if len(self._equity_history) >= 2:
+                trend_color = (
+                    "green"
+                    if self._equity_history[-1] >= self._equity_history[0]
+                    else "red"
+                )
+            else:
+                trend_color = "white"
+
+            spark_text = Text()
+            spark_text.append("Equity Trend: ", style="dim")
+            spark_text.append(sparkline, style=trend_color)
+            return Panel(
+                Group(table, Text(""), spark_text),
+                title="💰 Account",
+                border_style="green",
+            )
 
         return Panel(table, title="💰 Account", border_style="green")
 
@@ -362,6 +513,61 @@ class TradingDashboard:
             )
 
         return Panel(table, title="📊 Positions", border_style="blue")
+
+    def _make_stats_panel(self) -> Panel:
+        """Create session statistics panel."""
+        from rich.columns import Columns
+        from rich.console import Group
+
+        # Session duration
+        duration = datetime.now(UTC) - self._session_start
+        hours, remainder = divmod(int(duration.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        # Win rate
+        win_rate = (
+            (self._winning_trades / self._total_trades * 100)
+            if self._total_trades > 0
+            else 0
+        )
+
+        # Build stats text
+        stats_text = Text()
+        stats_text.append("Session: ", style="dim")
+        stats_text.append(duration_str, style="bold")
+        stats_text.append("  |  Trades: ", style="dim")
+        stats_text.append(str(self._total_trades), style="bold")
+        stats_text.append("  |  Win Rate: ", style="dim")
+        win_color = "green" if win_rate >= 50 else "yellow" if win_rate >= 30 else "red"
+        stats_text.append(f"{win_rate:.0f}%", style=f"bold {win_color}")
+
+        # Strategy breakdown if we have data
+        if self._strategy_stats:
+            strat_items = []
+            for name, stats in sorted(
+                self._strategy_stats.items(), key=lambda x: -x[1]["total_pnl"]
+            ):
+                strat_win_rate = (
+                    stats["wins"] / stats["trades"] * 100 if stats["trades"] > 0 else 0
+                )
+                pnl_color = "green" if stats["total_pnl"] >= 0 else "red"
+                strat_text = Text()
+                strat_text.append(f"{name}: ", style="bold")
+                strat_text.append(
+                    f"${stats['total_pnl']:+,.0f}", style=f"{pnl_color}"
+                )
+                strat_text.append(f" ({stats['trades']}T, {strat_win_rate:.0f}%W)", style="dim")
+                strat_items.append(strat_text)
+
+            if strat_items:
+                return Panel(
+                    Group(stats_text, Text(""), Columns(strat_items[:4], expand=True)),
+                    title="📊 Session Stats",
+                    border_style="cyan",
+                )
+
+        return Panel(stats_text, title="📊 Session Stats", border_style="cyan")
 
     def _make_orders_panel(self, orders: list[Order]) -> Panel:
         """Create open orders panel."""
