@@ -14,6 +14,8 @@ from trader.config.settings import get_settings, setup_logging
 from trader.core.models import TimeFrame
 from trader.data.fetcher import get_data_fetcher
 from trader.engine.backtest import BacktestEngine, BacktestResult
+from trader.engine.costs import CostModel
+from trader.engine.walkforward import WalkForwardOptimizer
 from trader.storage import get_trade_store
 from trader.strategies.registry import get_strategy, list_strategies
 
@@ -278,6 +280,288 @@ async def _run_scan(
         console.print(
             f"\n[dim]Skipped: {', '.join(r['symbol'] for r in failed_results)}[/dim]"
         )
+
+    console.print()
+
+
+@app.command("walkforward")
+def walkforward(
+    symbol: str = typer.Argument(..., help="Stock symbol to test"),
+    strategy: str = typer.Option(
+        "sma", "--strategy", "-S", help="Strategy to optimize"
+    ),
+    days: int = typer.Option(730, "--days", "-d", help="Days of history (2+ years recommended)"),
+    windows: int = typer.Option(5, "--windows", "-w", help="Number of walk-forward windows"),
+    train_pct: float = typer.Option(0.7, "--train-pct", "-t", help="Training percentage (0.5-0.9)"),
+    capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
+    costs: str = typer.Option(
+        "retail", "--costs", help="Cost model: zero, retail, active, institutional"
+    ),
+) -> None:
+    """
+    Run walk-forward optimization to validate strategy robustness.
+
+    Walk-forward splits data into train/test windows, optimizes on train,
+    and tests on out-of-sample data. This prevents overfitting.
+
+    The efficiency ratio (test/train performance) indicates robustness:
+    - >0.7: Excellent - strategy appears robust
+    - 0.5-0.7: Good - acceptable overfitting
+    - 0.3-0.5: Warning - significant overfitting
+    - <0.3: Poor - strategy likely won't work live
+    """
+    asyncio.run(
+        _run_walkforward(
+            symbol=symbol,
+            strategy_name=strategy,
+            days=days,
+            windows=windows,
+            train_pct=train_pct,
+            capital=capital,
+            cost_model_name=costs,
+        )
+    )
+
+
+async def _run_walkforward(
+    symbol: str,
+    strategy_name: str,
+    days: int,
+    windows: int,
+    train_pct: float,
+    capital: float,
+    cost_model_name: str,
+) -> None:
+    """Async implementation of walk-forward command."""
+    settings = get_settings()
+
+    # Get cost model
+    cost_models = {
+        "zero": CostModel.zero_cost(),
+        "retail": CostModel.retail_investor(),
+        "active": CostModel.active_trader(),
+        "institutional": CostModel.institutional(),
+    }
+    cost_model = cost_models.get(cost_model_name.lower(), CostModel.retail_investor())
+
+    console.print("\n[bold blue]Walk-Forward Optimization[/bold blue]")
+    console.print(f"Symbol: {symbol}")
+    console.print(f"Strategy: {strategy_name}")
+    console.print(f"Period: {days} days")
+    console.print(f"Windows: {windows} (Train: {train_pct*100:.0f}%, Test: {(1-train_pct)*100:.0f}%)")
+    console.print(f"Cost Model: {cost_model_name}")
+
+    # Get data fetcher
+    fetcher = get_data_fetcher(settings)
+
+    # Calculate date range
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    # Fetch data
+    with console.status(f"[bold green]Fetching {days} days of data for {symbol}..."):
+        data = await fetcher.fetch_bars_df(
+            symbol=symbol,
+            timeframe=TimeFrame.DAY,
+            start=start_date,
+            end=end_date,
+        )
+
+    if len(data) < 200:
+        console.print(f"[red]Error: Need at least 200 bars, got {len(data)}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Fetched {len(data)} bars")
+
+    # Define parameter grids for different strategies
+    param_grids = {
+        "sma": {"fast_period": [5, 10, 15, 20], "slow_period": [30, 50, 100, 200]},
+        "rsi": {"period": [7, 14, 21], "oversold": [20, 30], "overbought": [70, 80]},
+        "macd": {"fast_period": [8, 12, 16], "slow_period": [20, 26, 32]},
+        "momentum": {"lookback_days": [63, 126, 252], "hold_days": [1, 5, 10, 21]},
+        "bollinger": {"period": [10, 20, 30], "num_std": [1.5, 2.0, 2.5]},
+    }
+
+    param_grid = param_grids.get(strategy_name.lower(), {"fast_period": [10], "slow_period": [50]})
+
+    # Get strategy class
+    from trader.strategies.registry import _STRATEGIES
+    strategy_name_lower = strategy_name.lower()
+    if strategy_name_lower not in _STRATEGIES:
+        console.print(f"[red]Unknown strategy: {strategy_name}[/red]")
+        raise typer.Exit(1)
+
+    strategy_class = _STRATEGIES[strategy_name_lower][0]
+
+    # Run walk-forward
+    optimizer = WalkForwardOptimizer(
+        initial_capital=capital,
+        train_pct=train_pct,
+        n_windows=windows,
+        cost_model=cost_model,
+    )
+
+    with console.status("[bold green]Running walk-forward optimization..."):
+        result = await optimizer.run(
+            strategy_class=strategy_class,
+            param_grid=param_grid,
+            data=data,
+            symbol=symbol,
+        )
+
+    # Print results
+    result.print_summary()
+    result.print_windows()
+
+
+@app.command("backtest-costs")
+def backtest_costs(
+    symbol: str = typer.Argument(..., help="Stock symbol to backtest"),
+    strategy: str = typer.Option(
+        "sma", "--strategy", "-S", help="Strategy: sma, rsi, macd, momentum"
+    ),
+    days: int = typer.Option(365, "--days", "-d", help="Number of days of history"),
+    capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
+) -> None:
+    """
+    Compare backtest results with different cost models.
+
+    Shows how transaction costs affect strategy profitability.
+    Many strategies that appear profitable with zero costs
+    become losers when realistic costs are applied.
+    """
+    asyncio.run(
+        _run_backtest_costs(
+            symbol=symbol,
+            strategy_name=strategy,
+            days=days,
+            capital=capital,
+        )
+    )
+
+
+async def _run_backtest_costs(
+    symbol: str,
+    strategy_name: str,
+    days: int,
+    capital: float,
+) -> None:
+    """Compare backtest results with different cost models."""
+    settings = get_settings()
+
+    # Get strategy
+    try:
+        strategy = get_strategy(strategy_name)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print("\n[bold blue]Backtest Cost Comparison[/bold blue]")
+    console.print(f"Symbol: {symbol}")
+    console.print(f"Strategy: {strategy.description}")
+    console.print(f"Period: {days} days")
+
+    # Get data fetcher
+    fetcher = get_data_fetcher(settings)
+
+    # Calculate date range
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    # Fetch data
+    with console.status(f"[bold green]Fetching data for {symbol}..."):
+        data = await fetcher.fetch_bars_df(
+            symbol=symbol,
+            timeframe=TimeFrame.DAY,
+            start=start_date,
+            end=end_date,
+        )
+
+    if len(data) == 0:
+        console.print("[red]Error: No data returned[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Fetched {len(data)} bars\n")
+
+    # Define cost models to compare
+    cost_models = [
+        ("Zero Costs", CostModel.zero_cost()),
+        ("Retail Investor", CostModel.retail_investor()),
+        ("Active Trader", CostModel.active_trader()),
+        ("Institutional", CostModel.institutional()),
+    ]
+
+    results = []
+
+    with console.status("[bold green]Running backtests..."):
+        for name, cost_model in cost_models:
+            # Create fresh strategy instance for each run
+            strat = get_strategy(strategy_name)
+
+            engine = BacktestEngine(
+                initial_capital=capital,
+                cost_model=cost_model,
+            )
+
+            result = await engine.run(
+                strategy=strat,
+                data=data.copy(),
+                symbol=symbol,
+            )
+
+            results.append({
+                "name": name,
+                "return_pct": result.total_return_pct,
+                "trades": result.num_trades,
+                "sharpe": result.sharpe_ratio,
+                "max_dd": result.max_drawdown * 100,
+                "win_rate": result.win_rate * 100,
+                "profit_factor": result.profit_factor,
+            })
+
+    # Display comparison table
+    table = Table(title="Cost Model Comparison")
+    table.add_column("Cost Model", style="cyan")
+    table.add_column("Return", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Max DD", justify="right")
+    table.add_column("Trades", justify="right")
+    table.add_column("Win Rate", justify="right")
+
+    for r in results:
+        return_style = "green" if r["return_pct"] > 0 else "red"
+        table.add_row(
+            r["name"],
+            f"[{return_style}]{r['return_pct']:+.2f}%[/{return_style}]",
+            f"{r['sharpe']:.2f}",
+            f"{r['max_dd']:.1f}%",
+            str(r["trades"]),
+            f"{r['win_rate']:.1f}%",
+        )
+
+    console.print(table)
+
+    # Show cost impact analysis
+    if len(results) >= 2:
+        zero_return = results[0]["return_pct"]
+        retail_return = results[1]["return_pct"]
+        cost_impact = zero_return - retail_return
+
+        console.print("\n[bold]Cost Impact Analysis:[/bold]")
+        console.print(f"  Return without costs: {zero_return:+.2f}%")
+        console.print(f"  Return with retail costs: {retail_return:+.2f}%")
+        console.print(f"  Cost drag: {cost_impact:.2f}%")
+
+        if zero_return > 0 and retail_return <= 0:
+            console.print(
+                "\n[red bold]⚠ WARNING: Strategy is profitable only without costs![/red bold]"
+            )
+            console.print("[red]This strategy will likely lose money in live trading.[/red]")
+        elif cost_impact > zero_return * 0.5:
+            console.print(
+                "\n[yellow]⚠ Costs consume >50% of gross returns.[/yellow]"
+            )
+            console.print("[yellow]Consider strategies with fewer trades.[/yellow]")
 
     console.print()
 

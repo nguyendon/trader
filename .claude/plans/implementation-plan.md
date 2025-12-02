@@ -166,6 +166,14 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [ ] Strategy comparison charts
 - [ ] Export to HTML report
 
+### 4.5 Backtesting Validation ✅
+- [x] Walk-forward optimization (train/test split, prevents overfitting)
+- [x] Transaction cost modeling (commission, spread, slippage, market impact)
+- [x] Cost model presets (retail, active trader, institutional, HFT)
+- [x] Efficiency ratio calculation (test vs train performance)
+- [x] CLI: `trader walkforward` - Run walk-forward optimization
+- [x] CLI: `trader backtest-costs` - Compare results with different cost models
+
 ---
 
 ## Phase 5: Advanced Features 🚀
@@ -218,7 +226,7 @@ trader/
 │   ├── storage/        # Database, persistence
 │   ├── notifications/  # Discord, alerts
 │   └── cli.py          # CLI entry point
-├── tests/              # Test suite (382 tests)
+├── tests/              # Test suite (424 tests)
 ├── .claude/            # Claude skills & plans
 ├── justfile            # Dev commands
 └── pyproject.toml      # Project config
@@ -238,5 +246,7 @@ trader/
 | 6 | Risk analytics (VaR, correlation, beta) | 4.3 | ✅ Done |
 | 7 | Pairs trading strategy | 4.2 | ✅ Done |
 | 8 | True trailing stops (WebSocket) | 5.1 | ✅ Done |
-| 9 | Session & history persistence | 4.4 | Next |
-| 10 | Scheduled trading | 5.2 | Planned |
+| 9 | Walk-forward optimization | 4.5 | ✅ Done |
+| 10 | Transaction cost modeling | 4.5 | ✅ Done |
+| 11 | Session & history persistence | 4.4 | Next |
+| 12 | Scheduled trading | 5.2 | Planned |

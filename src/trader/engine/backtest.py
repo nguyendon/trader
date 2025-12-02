@@ -17,6 +17,7 @@ from trader.core.models import (
 )
 
 if TYPE_CHECKING:
+    from trader.engine.costs import CostModel
     from trader.strategies.base import BaseStrategy
 
 
@@ -192,17 +193,20 @@ class BacktestEngine:
         initial_capital: float = 100_000.0,
         commission: float = 0.0,
         position_size_pct: float = 1.0,
+        cost_model: CostModel | None = None,
     ) -> None:
         """Initialize backtest engine.
 
         Args:
             initial_capital: Starting capital in dollars
-            commission: Commission per trade in dollars
+            commission: Commission per trade in dollars (deprecated, use cost_model)
             position_size_pct: Fraction of capital to use per trade (0-1)
+            cost_model: Transaction cost model for realistic cost simulation
         """
         self.initial_capital = Decimal(str(initial_capital))
         self.commission = Decimal(str(commission))
         self.position_size_pct = position_size_pct
+        self.cost_model = cost_model
 
     async def run(
         self,
@@ -280,37 +284,62 @@ class BacktestEngine:
                 quantity = int(available_capital / close_price)
 
                 if quantity > 0:
+                    # Calculate entry cost
+                    if self.cost_model:
+                        entry_cost = self.cost_model.calculate_entry_cost(
+                            close_price, quantity
+                        )
+                        effective_entry = self.cost_model.get_effective_entry_price(
+                            close_price, quantity, "buy"
+                        )
+                    else:
+                        entry_cost = self.commission
+                        effective_entry = close_price
+
                     # Open long position
-                    cost = close_price * quantity + self.commission
+                    cost = close_price * quantity + entry_cost
                     capital -= cost
 
                     position = Position(
                         symbol=symbol,
                         quantity=quantity,
-                        avg_entry_price=close_price,
+                        avg_entry_price=effective_entry,
                         current_price=close_price,
                     )
                     position.update_price(close_price)
 
                     entry_time = timestamp
-                    entry_price = close_price
+                    entry_price = effective_entry
                     entry_reason = signal.reason
 
                     logger.debug(
-                        f"BUY {quantity} {symbol} @ {close_price} (capital: {capital})"
+                        f"BUY {quantity} {symbol} @ {close_price} "
+                        f"(effective: {effective_entry:.2f}, capital: {capital})"
                     )
 
             elif signal.action == SignalAction.SELL and position is not None:
+                # Calculate exit cost
+                if self.cost_model:
+                    exit_cost = self.cost_model.calculate_exit_cost(
+                        close_price, position.quantity
+                    )
+                    effective_exit = self.cost_model.get_effective_exit_price(
+                        close_price, position.quantity, "sell"
+                    )
+                else:
+                    exit_cost = self.commission
+                    effective_exit = close_price
+
                 # Close position
-                proceeds = close_price * position.quantity - self.commission
+                proceeds = close_price * position.quantity - exit_cost
                 capital += proceeds
 
                 # These should always be set when we have a position
                 assert entry_price is not None
                 assert entry_time is not None
 
-                # Record trade
-                pnl = proceeds - (entry_price * position.quantity)
+                # Record trade (using effective prices for accurate P&L)
+                pnl = (effective_exit - entry_price) * position.quantity
                 pnl_pct = float(pnl / (entry_price * position.quantity))
 
                 trade = Trade(
@@ -320,7 +349,7 @@ class BacktestEngine:
                     side=OrderSide.BUY,
                     quantity=position.quantity,
                     entry_price=entry_price,
-                    exit_price=close_price,
+                    exit_price=effective_exit,
                     pnl=pnl,
                     pnl_pct=pnl_pct,
                     reason_entry=entry_reason,
@@ -330,7 +359,7 @@ class BacktestEngine:
 
                 logger.debug(
                     f"SELL {position.quantity} {symbol} @ {close_price} "
-                    f"(P&L: {pnl:.2f}, capital: {capital})"
+                    f"(effective: {effective_exit:.2f}, P&L: {pnl:.2f}, capital: {capital})"
                 )
 
                 position = None
@@ -341,14 +370,27 @@ class BacktestEngine:
         # Close any remaining position at end
         if position is not None:
             final_price = Decimal(str(data.iloc[-1]["close"]))
-            proceeds = final_price * position.quantity - self.commission
+
+            # Calculate exit cost
+            if self.cost_model:
+                exit_cost = self.cost_model.calculate_exit_cost(
+                    final_price, position.quantity
+                )
+                effective_exit = self.cost_model.get_effective_exit_price(
+                    final_price, position.quantity, "sell"
+                )
+            else:
+                exit_cost = self.commission
+                effective_exit = final_price
+
+            proceeds = final_price * position.quantity - exit_cost
             capital += proceeds
 
             # These should always be set when we have a position
             assert entry_price is not None
             assert entry_time is not None
 
-            pnl = proceeds - (entry_price * position.quantity)
+            pnl = (effective_exit - entry_price) * position.quantity
             pnl_pct = float(pnl / (entry_price * position.quantity))
 
             trade = Trade(
@@ -358,7 +400,7 @@ class BacktestEngine:
                 side=OrderSide.BUY,
                 quantity=position.quantity,
                 entry_price=entry_price,
-                exit_price=final_price,
+                exit_price=effective_exit,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
                 reason_entry=entry_reason,
