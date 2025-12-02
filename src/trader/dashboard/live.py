@@ -82,32 +82,43 @@ def _setup_keyboard_listener() -> tuple[
 
     def read_char_blocking() -> str:
         """Read a single character, handling escape sequences."""
-        char = sys.stdin.read(1)
-        if char == "\x1b":  # Escape character
-            # Check if more characters are available (arrow key sequence)
-            # Use select with a short timeout to check
-            if select.select([sys.stdin], [], [], 0.05)[0]:
-                # More chars available - likely an escape sequence
-                seq = char
-                while select.select([sys.stdin], [], [], 0.01)[0]:
-                    seq += sys.stdin.read(1)
-                    if len(seq) >= 3:
-                        break
-                # Return the full sequence for arrow keys
-                if seq == "\x1b[A":
-                    return "UP"
-                elif seq == "\x1b[B":
-                    return "DOWN"
-                elif seq == "\x1b[C":
-                    return "RIGHT"
-                elif seq == "\x1b[D":
-                    return "LEFT"
-                # Unknown sequence, return ESC
-                return "ESC"
-            else:
-                # Just Escape key pressed alone
-                return "ESC"
-        return char
+        try:
+            char = sys.stdin.read(1)
+            if not char:
+                return ""
+            if char == "\x1b":  # Escape character
+                # Check if more characters are available (arrow key sequence)
+                # Use select with a short timeout to check
+                try:
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        # More chars available - likely an escape sequence
+                        seq = char
+                        while select.select([sys.stdin], [], [], 0.01)[0]:
+                            next_char = sys.stdin.read(1)
+                            if not next_char:
+                                break
+                            seq += next_char
+                            if len(seq) >= 3:
+                                break
+                        # Return the full sequence for arrow keys
+                        if seq == "\x1b[A":
+                            return "UP"
+                        elif seq == "\x1b[B":
+                            return "DOWN"
+                        elif seq == "\x1b[C":
+                            return "RIGHT"
+                        elif seq == "\x1b[D":
+                            return "LEFT"
+                        # Unknown sequence, return ESC
+                        return "ESC"
+                    else:
+                        # Just Escape key pressed alone
+                        return "ESC"
+                except Exception:
+                    return "ESC"
+            return char
+        except Exception:
+            return ""
 
     async def read_keys() -> None:
         """Read keyboard input in background."""
@@ -360,6 +371,9 @@ class TradingDashboard:
             self._strategy_stats.clear()
             self._session_start = datetime.now(UTC)
             self._status_message = "Session stats reset"
+        elif key in ("UP", "DOWN", "LEFT", "RIGHT"):
+            # Arrow keys - ignore in main view (used in menus)
+            pass
 
     async def _handle_menu_key(self, key: str) -> None:
         """Handle keyboard input in menu mode."""
