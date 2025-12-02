@@ -511,6 +511,34 @@ class TestTradingDashboard:
         assert len(dashboard._menu_items) == 0
 
     @pytest.mark.asyncio
+    async def test_menu_close_on_esc_key(self, mock_broker: MagicMock) -> None:
+        """Test closing menu with ESC key."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._menu_mode = "positions"
+        dashboard._menu_items = [MagicMock()]
+
+        await dashboard._handle_menu_key("ESC")
+
+        assert dashboard._menu_mode is None
+        assert len(dashboard._menu_items) == 0
+
+    @pytest.mark.asyncio
+    async def test_menu_navigation_arrow_keys(self, mock_broker: MagicMock) -> None:
+        """Test menu navigation with arrow keys."""
+        dashboard = TradingDashboard(mock_broker)
+        dashboard._menu_mode = "positions"
+        dashboard._menu_items = [MagicMock(), MagicMock(), MagicMock()]
+        dashboard._selected_index = 0
+
+        # Navigate down with arrow key
+        await dashboard._handle_menu_key("DOWN")
+        assert dashboard._selected_index == 1
+
+        # Navigate up with arrow key
+        await dashboard._handle_menu_key("UP")
+        assert dashboard._selected_index == 0
+
+    @pytest.mark.asyncio
     async def test_menu_number_selection(self, mock_broker: MagicMock) -> None:
         """Test direct number selection in menu."""
         position = MagicMock()

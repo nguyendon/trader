@@ -68,6 +68,7 @@ def _setup_keyboard_listener() -> tuple[
     asyncio.Queue[str], typing.Callable[[], typing.Coroutine], typing.Callable[[], None]
 ]:
     """Set up non-blocking keyboard input for Unix systems."""
+    import select
     import termios
     import tty
 
@@ -78,6 +79,35 @@ def _setup_keyboard_listener() -> tuple[
     def restore_terminal() -> None:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
+    def read_char_blocking() -> str:
+        """Read a single character, handling escape sequences."""
+        char = sys.stdin.read(1)
+        if char == "\x1b":  # Escape character
+            # Check if more characters are available (arrow key sequence)
+            # Use select with a short timeout to check
+            if select.select([sys.stdin], [], [], 0.05)[0]:
+                # More chars available - likely an escape sequence
+                seq = char
+                while select.select([sys.stdin], [], [], 0.01)[0]:
+                    seq += sys.stdin.read(1)
+                    if len(seq) >= 3:
+                        break
+                # Return the full sequence for arrow keys
+                if seq == "\x1b[A":
+                    return "UP"
+                elif seq == "\x1b[B":
+                    return "DOWN"
+                elif seq == "\x1b[C":
+                    return "RIGHT"
+                elif seq == "\x1b[D":
+                    return "LEFT"
+                # Unknown sequence, return ESC
+                return "ESC"
+            else:
+                # Just Escape key pressed alone
+                return "ESC"
+        return char
+
     async def read_keys() -> None:
         """Read keyboard input in background."""
         loop = asyncio.get_event_loop()
@@ -85,9 +115,13 @@ def _setup_keyboard_listener() -> tuple[
             tty.setcbreak(fd)
             while True:
                 # Use run_in_executor for non-blocking read
-                char = await loop.run_in_executor(None, sys.stdin.read, 1)
+                char = await loop.run_in_executor(None, read_char_blocking)
                 if char:
-                    await queue.put(char.lower())
+                    # Lowercase single chars, keep special keys as-is
+                    if len(char) == 1:
+                        await queue.put(char.lower())
+                    else:
+                        await queue.put(char)
         except asyncio.CancelledError:
             pass
         finally:
@@ -304,22 +338,23 @@ class TradingDashboard:
 
     async def _handle_menu_key(self, key: str) -> None:
         """Handle keyboard input in menu mode."""
-        if key == "\x1b" or key == "q":  # Escape or Q to close menu
+        if key in ("ESC", "q"):  # Escape or Q to close menu
             self._menu_mode = None
             self._menu_items = []
             self._selected_index = 0
             self._status_message = ""
-        elif key == "?" and self._menu_mode == "help" or self._menu_mode == "help":
+        elif self._menu_mode == "help":
+            # Any key closes help
             self._menu_mode = None
-        elif key in ("j", "\x1b[B"):  # j or down arrow
+        elif key in ("j", "DOWN"):  # j or down arrow
             if self._menu_items:
                 self._selected_index = (self._selected_index + 1) % len(self._menu_items)
-        elif key in ("k", "\x1b[A"):  # k or up arrow
+        elif key in ("k", "UP"):  # k or up arrow
             if self._menu_items:
                 self._selected_index = (self._selected_index - 1) % len(self._menu_items)
         elif key == "\r" or key == "\n":  # Enter to select
             await self._execute_menu_action()
-        elif key.isdigit():
+        elif len(key) == 1 and key.isdigit():
             # Direct number selection (1-9)
             idx = int(key) - 1
             if 0 <= idx < len(self._menu_items):
