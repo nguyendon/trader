@@ -143,13 +143,18 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [ ] Pairs trading strategy
 - [ ] Custom strategy loader (from file)
 
-### 4.3 Risk Analytics
-- [ ] Value at Risk (VaR) calculation
-- [ ] Portfolio correlation matrix
-- [ ] Sector exposure analysis
-- [ ] Beta calculation vs benchmark
-- [ ] Maximum drawdown tracking
-- [ ] CLI: `trader risk` - Risk dashboard
+### 4.3 Risk Analytics ✅
+- [x] Value at Risk (VaR) calculation (historical + parametric)
+- [x] CVaR (Expected Shortfall)
+- [x] Portfolio correlation matrix
+- [x] Sector exposure analysis
+- [x] Beta calculation vs benchmark
+- [x] Alpha (Jensen's alpha)
+- [x] Maximum drawdown tracking
+- [x] Sharpe ratio, Sortino ratio, volatility
+- [x] CLI: `trader risk` - Risk analysis dashboard
+- [x] CLI: `trader var` - Single position VaR
+- [x] CLI: `trader correlation` - Correlation matrix
 
 ### 4.4 Session & Trading History Persistence
 - [ ] Persist dashboard session stats to database
@@ -213,7 +218,7 @@ trader/
 │   ├── storage/        # Database, persistence
 │   ├── notifications/  # Discord, alerts
 │   └── cli.py          # CLI entry point
-├── tests/              # Test suite (157 tests)
+├── tests/              # Test suite (335 tests)
 ├── .claude/            # Claude skills & plans
 ├── justfile            # Dev commands
 └── pyproject.toml      # Project config
@@ -230,7 +235,7 @@ trader/
 | 3 | Multi-strategy support | 3.3 | ✅ Done |
 | 4 | Portfolio rebalancing | 4.1 | ✅ Done |
 | 5 | More strategies (Bollinger, Mean Reversion, VWAP) | 4.2 | ✅ Done |
-| 6 | Session & history persistence | 4.4 | Next |
-| 7 | Risk analytics (VaR, correlation) | 4.3 | Planned |
+| 6 | Risk analytics (VaR, correlation, beta) | 4.3 | ✅ Done |
+| 7 | Session & history persistence | 4.4 | Next |
 | 8 | True trailing stops (WebSocket) | 5.1 | Planned |
 | 9 | Scheduled trading | 5.2 | Planned |
