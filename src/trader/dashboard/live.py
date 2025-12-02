@@ -69,7 +69,6 @@ def _setup_keyboard_listener() -> tuple[
     asyncio.Queue[str], typing.Callable[[], typing.Coroutine], typing.Callable[[], None]
 ]:
     """Set up non-blocking keyboard input for Unix systems."""
-    import select
     import termios
     import tty
 
@@ -80,48 +79,21 @@ def _setup_keyboard_listener() -> tuple[
     def restore_terminal() -> None:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
+    # Buffer for escape sequence detection
+    esc_buffer: list[str] = []
+    esc_timeout = 0.0
+
     def read_char_blocking() -> str:
-        """Read a single character, handling escape sequences."""
+        """Read a single character."""
         try:
             char = sys.stdin.read(1)
-            if not char:
-                return ""
-            if char == "\x1b":  # Escape character
-                # Check if more characters are available (arrow key sequence)
-                # Use select with a short timeout to check
-                try:
-                    if select.select([sys.stdin], [], [], 0.05)[0]:
-                        # More chars available - likely an escape sequence
-                        seq = char
-                        while select.select([sys.stdin], [], [], 0.01)[0]:
-                            next_char = sys.stdin.read(1)
-                            if not next_char:
-                                break
-                            seq += next_char
-                            if len(seq) >= 3:
-                                break
-                        # Return the full sequence for arrow keys
-                        if seq == "\x1b[A":
-                            return "UP"
-                        elif seq == "\x1b[B":
-                            return "DOWN"
-                        elif seq == "\x1b[C":
-                            return "RIGHT"
-                        elif seq == "\x1b[D":
-                            return "LEFT"
-                        # Unknown sequence, return ESC
-                        return "ESC"
-                    else:
-                        # Just Escape key pressed alone
-                        return "ESC"
-                except Exception:
-                    return "ESC"
-            return char
+            return char if char else ""
         except Exception:
             return ""
 
     async def read_keys() -> None:
         """Read keyboard input in background."""
+        nonlocal esc_buffer, esc_timeout
         loop = asyncio.get_event_loop()
         try:
             tty.setcbreak(fd)
@@ -129,12 +101,48 @@ def _setup_keyboard_listener() -> tuple[
                 try:
                     # Use run_in_executor for non-blocking read
                     char = await loop.run_in_executor(None, read_char_blocking)
-                    if char:
-                        # Lowercase single chars, keep special keys as-is
-                        if len(char) == 1:
-                            await queue.put(char.lower())
-                        else:
-                            await queue.put(char)
+                    if not char:
+                        continue
+
+                    now = time.time()
+
+                    # If we have a pending escape sequence
+                    if esc_buffer:
+                        # Check if timeout expired (standalone ESC)
+                        if now - esc_timeout > 0.1:
+                            # Timeout - send ESC and clear buffer
+                            await queue.put("ESC")
+                            esc_buffer.clear()
+
+                        # Add char to buffer
+                        esc_buffer.append(char)
+                        seq = "".join(esc_buffer)
+
+                        # Check for complete arrow key sequences
+                        if seq == "\x1b[A":
+                            await queue.put("UP")
+                            esc_buffer.clear()
+                        elif seq == "\x1b[B":
+                            await queue.put("DOWN")
+                            esc_buffer.clear()
+                        elif seq == "\x1b[C":
+                            await queue.put("RIGHT")
+                            esc_buffer.clear()
+                        elif seq == "\x1b[D":
+                            await queue.put("LEFT")
+                            esc_buffer.clear()
+                        elif len(seq) >= 3:
+                            # Unknown sequence, discard
+                            esc_buffer.clear()
+                        # Otherwise keep buffering
+                    elif char == "\x1b":
+                        # Start of escape sequence
+                        esc_buffer = [char]
+                        esc_timeout = now
+                    else:
+                        # Regular character
+                        await queue.put(char.lower())
+
                 except Exception as e:
                     # Log but don't crash on read errors
                     logger.debug(f"Keyboard read error: {e}")
