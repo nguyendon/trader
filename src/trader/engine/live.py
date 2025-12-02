@@ -64,8 +64,12 @@ class SafetyLimits:
     require_confirmation: bool = False  # Require human confirmation
 
     # Stop loss / take profit settings
-    stop_loss_pct: float | None = None  # Auto stop loss as % below entry (e.g., 0.05 = 5%)
-    take_profit_pct: float | None = None  # Auto take profit as % above entry (e.g., 0.10 = 10%)
+    stop_loss_pct: float | None = (
+        None  # Auto stop loss as % below entry (e.g., 0.05 = 5%)
+    )
+    take_profit_pct: float | None = (
+        None  # Auto take profit as % above entry (e.g., 0.10 = 10%)
+    )
     trailing_stop_pct: float | None = None  # Trailing stop as % (e.g., 0.05 = 5%)
     use_bracket_orders: bool = True  # Use bracket orders when stop/profit set
 
@@ -281,7 +285,9 @@ class LiveTradingEngine:
 
         # Check max trades per day
         if self._daily_trades >= safety.max_trades_per_day:
-            return f"Max trades reached: {self._daily_trades}/{safety.max_trades_per_day}"
+            return (
+                f"Max trades reached: {self._daily_trades}/{safety.max_trades_per_day}"
+            )
 
         # Check daily loss limit
         if float(self._daily_pnl) <= -safety.max_loss_per_day:
@@ -289,21 +295,29 @@ class LiveTradingEngine:
 
         return None
 
-    async def _check_position_limits(self, symbol: str, quantity: int, price: Decimal) -> tuple[bool, str]:
+    async def _check_position_limits(
+        self, symbol: str, quantity: int, price: Decimal
+    ) -> tuple[bool, str]:
         """Check if a trade would exceed position limits. Returns (ok, reason)."""
         safety = self.config.safety
         trade_value = float(price * quantity)
 
         # Check single position limit
         if trade_value > safety.max_position_value:
-            return False, f"Trade value ${trade_value:,.0f} exceeds max ${safety.max_position_value:,.0f}"
+            return (
+                False,
+                f"Trade value ${trade_value:,.0f} exceeds max ${safety.max_position_value:,.0f}",
+            )
 
         # Check total portfolio limit
         positions = await self.broker.get_positions()
         total_value = sum(float(p.market_value or 0) for p in positions)
 
         if total_value + trade_value > safety.max_portfolio_value:
-            return False, f"Would exceed portfolio limit: ${total_value + trade_value:,.0f} > ${safety.max_portfolio_value:,.0f}"
+            return (
+                False,
+                f"Would exceed portfolio limit: ${total_value + trade_value:,.0f} > ${safety.max_portfolio_value:,.0f}",
+            )
 
         return True, ""
 
@@ -384,7 +398,9 @@ class LiveTradingEngine:
 
         min_bars = self._get_min_bars_required()
         if len(data) < min_bars:
-            logger.debug(f"{symbol}: Not enough data ({len(data)} bars, need {min_bars})")
+            logger.debug(
+                f"{symbol}: Not enough data ({len(data)} bars, need {min_bars})"
+            )
             return
 
         # Get current position
@@ -440,13 +456,17 @@ class LiveTradingEngine:
 
         # Check position limits for buys
         if signal.action == SignalAction.BUY:
-            ok, reason = await self._check_position_limits(symbol, quantity, current_price)
+            ok, reason = await self._check_position_limits(
+                symbol, quantity, current_price
+            )
             if not ok:
                 logger.warning(f"{symbol}: Trade blocked by safety limits - {reason}")
                 return
 
         # Optional human confirmation
-        if (self.config.safety.require_confirmation or self.on_signal) and self.on_signal:
+        if (
+            self.config.safety.require_confirmation or self.on_signal
+        ) and self.on_signal:
             approved = self.on_signal(signal, symbol, quantity)
             if not approved:
                 logger.info(f"{symbol}: Trade rejected by confirmation callback")
@@ -503,7 +523,9 @@ class LiveTradingEngine:
                 parts.append(f"TP@${float(take_profit_price):.2f}")
             bracket_info = f" [{' '.join(parts)}]"
 
-        logger.info(f"Executing {side.value} {quantity} {symbol}{bracket_info}: {signal.reason}")
+        logger.info(
+            f"Executing {side.value} {quantity} {symbol}{bracket_info}: {signal.reason}"
+        )
 
         result = await self.broker.submit_order(order)
         self.risk_manager.record_trade()

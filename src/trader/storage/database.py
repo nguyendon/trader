@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 if TYPE_CHECKING:
-    from trader.engine.backtest import BacktestResult, Trade
+    from trader.engine.backtest import BacktestResult
 
 
 # Default database path
@@ -174,52 +174,58 @@ class TradeStore:
 
             # Insert backtest run
             summary = result.summary()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO backtest_runs (
                     run_id, strategy_name, symbol, start_date, end_date,
                     initial_capital, final_capital, total_return_pct,
                     num_trades, win_rate, profit_factor, max_drawdown_pct,
                     sharpe_ratio, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                run_id,
-                result.strategy_name,
-                result.symbol,
-                summary["start_date"],
-                summary["end_date"],
-                summary["initial_capital"],
-                summary["final_capital"],
-                summary["total_return_pct"],
-                summary["num_trades"],
-                summary["win_rate"],
-                summary["profit_factor"],
-                summary["max_drawdown_pct"],
-                summary["sharpe_ratio"],
-                datetime.now().isoformat(),
-            ))
+            """,
+                (
+                    run_id,
+                    result.strategy_name,
+                    result.symbol,
+                    summary["start_date"],
+                    summary["end_date"],
+                    summary["initial_capital"],
+                    summary["final_capital"],
+                    summary["total_return_pct"],
+                    summary["num_trades"],
+                    summary["win_rate"],
+                    summary["profit_factor"],
+                    summary["max_drawdown_pct"],
+                    summary["sharpe_ratio"],
+                    datetime.now().isoformat(),
+                ),
+            )
 
             # Insert trades
             for trade in result.trades:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO trades (
                         run_id, symbol, entry_time, exit_time, side,
                         quantity, entry_price, exit_price, pnl, pnl_pct,
                         reason_entry, reason_exit
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    run_id,
-                    trade.symbol,
-                    trade.entry_time.isoformat(),
-                    trade.exit_time.isoformat(),
-                    trade.side.value,
-                    trade.quantity,
-                    float(trade.entry_price),
-                    float(trade.exit_price),
-                    float(trade.pnl),
-                    trade.pnl_pct,
-                    trade.reason_entry,
-                    trade.reason_exit,
-                ))
+                """,
+                    (
+                        run_id,
+                        trade.symbol,
+                        trade.entry_time.isoformat(),
+                        trade.exit_time.isoformat(),
+                        trade.side.value,
+                        trade.quantity,
+                        float(trade.entry_price),
+                        float(trade.exit_price),
+                        float(trade.pnl),
+                        trade.pnl_pct,
+                        trade.reason_entry,
+                        trade.reason_exit,
+                    ),
+                )
 
             conn.commit()
             logger.info(f"Saved backtest run {run_id} with {len(result.trades)} trades")
@@ -315,7 +321,8 @@ class TradeStore:
             where_clause = "WHERE symbol = ?" if symbol else ""
             params = [symbol] if symbol else []
 
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
@@ -327,7 +334,9 @@ class TradeStore:
                     AVG(pnl_pct) as avg_pnl_pct
                 FROM trades
                 {where_clause}
-            """, params)
+            """,
+                params,
+            )
 
             row = cursor.fetchone()
             if row is None or row["total_trades"] == 0:
@@ -411,19 +420,31 @@ class TradeStore:
             cursor = conn.cursor()
             now = datetime.now().isoformat()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO live_trades (
                     symbol, side, quantity, entry_price, entry_time,
                     status, strategy, broker_order_id, notes, created_at
                 ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
-            """, (
-                symbol, side, quantity, entry_price, now,
-                strategy, broker_order_id, notes, now,
-            ))
+            """,
+                (
+                    symbol,
+                    side,
+                    quantity,
+                    entry_price,
+                    now,
+                    strategy,
+                    broker_order_id,
+                    notes,
+                    now,
+                ),
+            )
 
             conn.commit()
             trade_id = cursor.lastrowid
-            logger.info(f"Recorded entry: {side} {quantity} {symbol} @ ${entry_price:.2f}")
+            logger.info(
+                f"Recorded entry: {side} {quantity} {symbol} @ ${entry_price:.2f}"
+            )
             return trade_id
 
     def record_exit(
@@ -446,9 +467,7 @@ class TradeStore:
             cursor = conn.cursor()
 
             # Get the original trade
-            cursor.execute(
-                "SELECT * FROM live_trades WHERE id = ?", (trade_id,)
-            )
+            cursor.execute("SELECT * FROM live_trades WHERE id = ?", (trade_id,))
             trade = cursor.fetchone()
 
             if trade is None:
@@ -473,14 +492,19 @@ class TradeStore:
 
             now = datetime.now().isoformat()
             existing_notes = trade["notes"] or ""
-            combined_notes = f"{existing_notes}\n{notes}".strip() if notes else existing_notes
+            combined_notes = (
+                f"{existing_notes}\n{notes}".strip() if notes else existing_notes
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE live_trades
                 SET exit_price = ?, exit_time = ?, pnl = ?, pnl_pct = ?,
                     status = 'closed', notes = ?
                 WHERE id = ?
-            """, (exit_price, now, pnl, pnl_pct, combined_notes, trade_id))
+            """,
+                (exit_price, now, pnl, pnl_pct, combined_notes, trade_id),
+            )
 
             conn.commit()
             logger.info(
@@ -515,7 +539,7 @@ class TradeStore:
                 cursor.execute(
                     "SELECT * FROM live_trades WHERE status = 'open' AND symbol = ? "
                     "ORDER BY entry_time DESC",
-                    (symbol,)
+                    (symbol,),
                 )
             else:
                 cursor.execute(
@@ -596,7 +620,8 @@ class TradeStore:
 
             where = " AND ".join(where_clauses)
 
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
@@ -610,7 +635,9 @@ class TradeStore:
                     SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END) as gross_loss
                 FROM live_trades
                 WHERE {where}
-            """, params)
+            """,
+                params,
+            )
 
             row = cursor.fetchone()
             if row is None or row["total_trades"] == 0:
@@ -673,17 +700,26 @@ class TradeStore:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR REPLACE INTO daily_pnl (
                     date, starting_equity, ending_equity, realized_pnl,
                     unrealized_pnl, num_trades, winning_trades, losing_trades,
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                date, starting_equity, ending_equity, realized_pnl,
-                unrealized_pnl, num_trades, winning_trades, losing_trades,
-                datetime.now().isoformat(),
-            ))
+            """,
+                (
+                    date,
+                    starting_equity,
+                    ending_equity,
+                    realized_pnl,
+                    unrealized_pnl,
+                    num_trades,
+                    winning_trades,
+                    losing_trades,
+                    datetime.now().isoformat(),
+                ),
+            )
 
             conn.commit()
             daily_return = ((ending_equity - starting_equity) / starting_equity) * 100
@@ -701,11 +737,14 @@ class TradeStore:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM daily_pnl
                 ORDER BY date DESC
                 LIMIT ?
-            """, (days,))
+            """,
+                (days,),
+            )
 
             return [dict(row) for row in cursor.fetchall()]
 
@@ -722,11 +761,14 @@ class TradeStore:
             cursor = conn.cursor()
 
             # Get daily P&L data
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM daily_pnl
                 ORDER BY date DESC
                 LIMIT ?
-            """, (days,))
+            """,
+                (days,),
+            )
 
             daily_records = [dict(row) for row in cursor.fetchall()]
 
@@ -766,9 +808,13 @@ class TradeStore:
                 "worst_day": min(daily_pnls) if daily_pnls else 0,
                 "win_days": win_days,
                 "lose_days": lose_days,
-                "win_rate": (win_days / len(daily_records) * 100) if daily_records else 0,
+                "win_rate": (win_days / len(daily_records) * 100)
+                if daily_records
+                else 0,
                 "total_trades": total_trades,
-                "avg_trades_per_day": total_trades / len(daily_records) if daily_records else 0,
+                "avg_trades_per_day": total_trades / len(daily_records)
+                if daily_records
+                else 0,
             }
 
     # ==================== Export Methods ====================
@@ -840,9 +886,17 @@ class TradeStore:
 
         # Write CSV
         fieldnames = [
-            "source", "symbol", "side", "quantity",
-            "entry_time", "exit_time", "entry_price", "exit_price",
-            "pnl", "pnl_pct", "strategy",
+            "source",
+            "symbol",
+            "side",
+            "quantity",
+            "entry_time",
+            "exit_time",
+            "entry_price",
+            "exit_price",
+            "pnl",
+            "pnl_pct",
+            "strategy",
         ]
 
         with open(filepath, "w", newline="") as f:
@@ -877,9 +931,14 @@ class TradeStore:
             return 0
 
         fieldnames = [
-            "date", "starting_equity", "ending_equity",
-            "realized_pnl", "unrealized_pnl", "num_trades",
-            "winning_trades", "losing_trades",
+            "date",
+            "starting_equity",
+            "ending_equity",
+            "realized_pnl",
+            "unrealized_pnl",
+            "num_trades",
+            "winning_trades",
+            "losing_trades",
         ]
 
         with open(filepath, "w", newline="") as f:

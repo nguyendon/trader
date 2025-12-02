@@ -424,7 +424,9 @@ class TestAlpacaBrokerMocked:
         assert result.broker_order_id == "test-order-123"
 
     @pytest.mark.asyncio
-    async def test_submit_bracket_order_with_stop_loss(self, mock_alpaca_broker, mocker) -> None:
+    async def test_submit_bracket_order_with_stop_loss(
+        self, mock_alpaca_broker, mocker
+    ) -> None:
         """Test submitting a bracket order with stop loss."""
         broker, mock_client = mock_alpaca_broker
 
@@ -448,7 +450,9 @@ class TestAlpacaBrokerMocked:
         assert call_args.stop_loss is not None
 
     @pytest.mark.asyncio
-    async def test_submit_trailing_stop_converts_to_fixed(self, mock_alpaca_broker, mocker) -> None:
+    async def test_submit_trailing_stop_converts_to_fixed(
+        self, mock_alpaca_broker, mocker
+    ) -> None:
         """Test that trailing stop is converted to fixed stop loss.
 
         Note: Alpaca doesn't support trailing stops in bracket order legs,
@@ -478,7 +482,9 @@ class TestAlpacaBrokerMocked:
         assert result.broker_order_id == "test-order-123"
 
     @pytest.mark.asyncio
-    async def test_submit_trailing_stop_with_take_profit(self, mock_alpaca_broker, mocker) -> None:
+    async def test_submit_trailing_stop_with_take_profit(
+        self, mock_alpaca_broker, mocker
+    ) -> None:
         """Test trailing stop converted to fixed stop with take profit."""
         broker, mock_client = mock_alpaca_broker
 

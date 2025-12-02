@@ -77,7 +77,9 @@ def _register_builtin_strategies() -> None:
     try:
         from trader.strategies.builtin.rsi import RSIStrategy
 
-        register_strategy("rsi", RSIStrategy, {"period": 14, "oversold": 30, "overbought": 70})
+        register_strategy(
+            "rsi", RSIStrategy, {"period": 14, "oversold": 30, "overbought": 70}
+        )
     except ImportError:
         pass
 
@@ -91,7 +93,9 @@ def _register_builtin_strategies() -> None:
     try:
         from trader.strategies.builtin.momentum import MomentumStrategy
 
-        register_strategy("momentum", MomentumStrategy, {"lookback_days": 126, "hold_days": 5})
+        register_strategy(
+            "momentum", MomentumStrategy, {"lookback_days": 126, "hold_days": 5}
+        )
     except ImportError:
         pass
 

@@ -275,8 +275,14 @@ class AlpacaBroker(BaseBroker):
         order.updated_at = datetime.utcnow()
 
         # Log bracket order details
-        sl_str = f"SL@${float(order.stop_loss_price):.2f}" if order.stop_loss_price else ""
-        tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
+        sl_str = (
+            f"SL@${float(order.stop_loss_price):.2f}" if order.stop_loss_price else ""
+        )
+        tp_str = (
+            f"TP@${float(order.take_profit_price):.2f}"
+            if order.take_profit_price
+            else ""
+        )
         bracket_str = f" [{sl_str} {tp_str}]".strip()
 
         logger.info(
@@ -311,9 +317,13 @@ class AlpacaBroker(BaseBroker):
         if order.trailing_stop_pct is not None:
             # Calculate stop price based on trailing percentage
             if side.value == "buy":
-                stop_price = float(current_price * (1 - Decimal(str(order.trailing_stop_pct))))
+                stop_price = float(
+                    current_price * (1 - Decimal(str(order.trailing_stop_pct)))
+                )
             else:
-                stop_price = float(current_price * (1 + Decimal(str(order.trailing_stop_pct))))
+                stop_price = float(
+                    current_price * (1 + Decimal(str(order.trailing_stop_pct)))
+                )
         else:
             # Fixed dollar trail amount
             trail_amount = float(order.trailing_stop_price)  # type: ignore[arg-type]
@@ -363,7 +373,11 @@ class AlpacaBroker(BaseBroker):
             if order.trailing_stop_pct
             else f"TSL@${float(order.trailing_stop_price):.2f}→SL@${stop_price:.2f}"  # type: ignore[arg-type]
         )
-        tp_str = f"TP@${float(order.take_profit_price):.2f}" if order.take_profit_price else ""
+        tp_str = (
+            f"TP@${float(order.take_profit_price):.2f}"
+            if order.take_profit_price
+            else ""
+        )
         bracket_str = f" [{tsl_str} {tp_str}]".strip()
 
         logger.info(

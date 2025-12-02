@@ -99,7 +99,8 @@ class MomentumStrategy(BaseStrategy):
 
             # Calculate rolling momentum
             data["momentum"] = (
-                data["close"].shift(lookback_end) / data["close"].shift(lookback_start) - 1
+                data["close"].shift(lookback_end) / data["close"].shift(lookback_start)
+                - 1
             ) * 100  # As percentage
 
             # Also track simple recent return for context
@@ -175,7 +176,9 @@ class MomentumStrategy(BaseStrategy):
             reason=f"Holding: momentum still positive at {momentum:.1f}%",
         )
 
-    def rank_symbols(self, symbol_data: dict[str, pd.DataFrame]) -> list[tuple[str, float]]:
+    def rank_symbols(
+        self, symbol_data: dict[str, pd.DataFrame]
+    ) -> list[tuple[str, float]]:
         """
         Rank multiple symbols by momentum.
 

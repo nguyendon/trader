@@ -23,9 +23,9 @@ if TYPE_CHECKING:
     from trader.core.models import Order, Position
 
 
-def _setup_keyboard_listener() -> (
-    tuple[asyncio.Queue[str], typing.Callable[[], typing.Coroutine], typing.Callable[[], None]]
-):
+def _setup_keyboard_listener() -> tuple[
+    asyncio.Queue[str], typing.Callable[[], typing.Coroutine], typing.Callable[[], None]
+]:
     """Set up non-blocking keyboard input for Unix systems."""
     import termios
     import tty
@@ -158,13 +158,15 @@ class TradingDashboard:
                 if orders:
                     self._status_message = f"Closed {len(orders)} positions"
                     for order in orders:
-                        self.add_trade({
-                            "symbol": order.symbol,
-                            "side": "sell",
-                            "quantity": order.quantity,
-                            "price": float(order.filled_avg_price or 0),
-                            "time": datetime.now(),
-                        })
+                        self.add_trade(
+                            {
+                                "symbol": order.symbol,
+                                "side": "sell",
+                                "quantity": order.quantity,
+                                "price": float(order.filled_avg_price or 0),
+                                "time": datetime.now(),
+                            }
+                        )
                 else:
                     self._status_message = "No positions to close"
             except Exception as e:
@@ -309,7 +311,9 @@ class TradingDashboard:
                 else 0
             )
             pnl_color = "green" if daily_pnl >= 0 else "red"
-            pnl_str = f"[{pnl_color}]${daily_pnl:+,.2f} ({daily_pnl_pct:+.2f}%)[/{pnl_color}]"
+            pnl_str = (
+                f"[{pnl_color}]${daily_pnl:+,.2f} ({daily_pnl_pct:+.2f}%)[/{pnl_color}]"
+            )
             table.add_row("Daily P&L", pnl_str)
 
         # Unrealized P&L from positions

@@ -7,10 +7,9 @@ from typing import Any
 
 import yaml
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from trader.config.settings import DEFAULT_DATA_DIR
-
 
 # Default config path
 DEFAULT_CONFIG_PATH = DEFAULT_DATA_DIR / "config.yaml"
@@ -59,7 +58,9 @@ class TradingConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     watchlists: list[WatchlistConfig] = Field(default_factory=list)
-    default_symbols: list[str] = Field(default_factory=lambda: ["AAPL", "MSFT", "GOOGL"])
+    default_symbols: list[str] = Field(
+        default_factory=lambda: ["AAPL", "MSFT", "GOOGL"]
+    )
 
     def get_strategy(self, name: str) -> StrategyConfig | None:
         """Get a strategy config by name."""

@@ -101,7 +101,9 @@ class RSIStrategy(BaseStrategy):
             return self.buy_signal(
                 symbol=symbol,
                 reason=f"RSI oversold: {rsi:.1f} < {self.oversold}",
-                confidence=min(1.0, (self.oversold - rsi) / 10),  # Higher confidence when more oversold
+                confidence=min(
+                    1.0, (self.oversold - rsi) / 10
+                ),  # Higher confidence when more oversold
             )
 
         # Sell when overbought (only if we have position)

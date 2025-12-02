@@ -334,7 +334,9 @@ class TestMACDStrategy:
 
     def test_init_invalid_periods(self) -> None:
         """Test invalid period configuration."""
-        with pytest.raises(ValueError, match="fast_period must be less than slow_period"):
+        with pytest.raises(
+            ValueError, match="fast_period must be less than slow_period"
+        ):
             MACDStrategy(fast_period=26, slow_period=12)
 
     def test_name_property(self) -> None:
@@ -390,7 +392,9 @@ class TestMomentumStrategy:
 
     def test_init_invalid_lookback(self) -> None:
         """Test invalid lookback configuration."""
-        with pytest.raises(ValueError, match="lookback_days must be greater than skip_days"):
+        with pytest.raises(
+            ValueError, match="lookback_days must be greater than skip_days"
+        ):
             MomentumStrategy(lookback_days=5, skip_days=10)
 
     def test_name_property(self) -> None:

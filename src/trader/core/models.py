@@ -140,7 +140,9 @@ class Order:
     take_profit_price: Decimal | None = None  # Take profit limit price
 
     # Trailing stop fields
-    trailing_stop_pct: float | None = None  # Trailing stop as percentage (e.g., 0.05 = 5%)
+    trailing_stop_pct: float | None = (
+        None  # Trailing stop as percentage (e.g., 0.05 = 5%)
+    )
     trailing_stop_price: Decimal | None = None  # Trailing stop as fixed dollar amount
 
     def __post_init__(self) -> None:
@@ -158,7 +160,9 @@ class Order:
             and self.trailing_stop_pct is None
             and self.trailing_stop_price is None
         ):
-            raise ValueError("Bracket orders require stop_loss, take_profit, or trailing_stop")
+            raise ValueError(
+                "Bracket orders require stop_loss, take_profit, or trailing_stop"
+            )
 
 
 @dataclass

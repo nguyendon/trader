@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 import pandas as pd
 import pytest
 
@@ -103,13 +101,15 @@ register_strategy("mock_hold", MockHoldStrategy)
 @pytest.fixture
 def sample_data() -> pd.DataFrame:
     """Create sample OHLCV data."""
-    return pd.DataFrame({
-        "open": [100.0, 101.0, 102.0],
-        "high": [101.0, 102.0, 103.0],
-        "low": [99.0, 100.0, 101.0],
-        "close": [100.5, 101.5, 102.5],
-        "volume": [1000, 1100, 1200],
-    })
+    return pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0],
+            "high": [101.0, 102.0, 103.0],
+            "low": [99.0, 100.0, 101.0],
+            "close": [100.5, 101.5, 102.5],
+            "volume": [1000, 1100, 1200],
+        }
+    )
 
 
 class TestStrategyAllocation:
@@ -364,10 +364,12 @@ class TestCreateStrategyGroup:
 
     def test_dict_config(self) -> None:
         """Test creating group from dict configs."""
-        group = create_strategy_group([
-            {"name": "mock_buy", "weight": 0.6},
-            {"name": "mock_sell", "weight": 0.4, "symbols": ["AAPL"]},
-        ])
+        group = create_strategy_group(
+            [
+                {"name": "mock_buy", "weight": 0.6},
+                {"name": "mock_sell", "weight": 0.4, "symbols": ["AAPL"]},
+            ]
+        )
 
         # Weights get normalized, so check relative ratio
         buy_alloc = group.allocations[0]
@@ -377,10 +379,12 @@ class TestCreateStrategyGroup:
 
     def test_mixed_config(self) -> None:
         """Test creating group from mixed string and dict."""
-        group = create_strategy_group([
-            "mock_hold",
-            {"name": "mock_buy", "params": {"confidence": 0.8}},
-        ])
+        group = create_strategy_group(
+            [
+                "mock_hold",
+                {"name": "mock_buy", "params": {"confidence": 0.8}},
+            ]
+        )
 
         assert group.allocations[0].name == "mock_hold"
         assert group.allocations[1].parameters == {"confidence": 0.8}
@@ -417,7 +421,10 @@ class TestMinConfidenceThreshold:
 
         # Low confidence should result in HOLD with threshold message
         assert signal.action == SignalAction.HOLD
-        assert "threshold" in signal.reason.lower() or "confidence" in signal.reason.lower()
+        assert (
+            "threshold" in signal.reason.lower()
+            or "confidence" in signal.reason.lower()
+        )
 
 
 class TestStrategyMetadata:
@@ -435,7 +442,9 @@ class TestStrategyMetadata:
         assert "strategy" in signal.metadata
         assert signal.metadata["strategy"] == "mock_buy"
 
-    def test_aggregated_signal_contains_metadata(self, sample_data: pd.DataFrame) -> None:
+    def test_aggregated_signal_contains_metadata(
+        self, sample_data: pd.DataFrame
+    ) -> None:
         """Test that aggregated signal contains aggregation metadata."""
         group = create_strategy_group(["mock_buy", "mock_hold"])
         processor = MultiStrategyProcessor(group)

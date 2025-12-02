@@ -120,7 +120,9 @@ class MultiStrategyProcessor:
         params_str = "_".join(f"{k}={v}" for k, v in sorted(alloc.parameters.items()))
         return f"{alloc.name}_{params_str}" if params_str else alloc.name
 
-    def get_strategies_for_symbol(self, symbol: str) -> list[tuple[StrategyAllocation, BaseStrategy]]:
+    def get_strategies_for_symbol(
+        self, symbol: str
+    ) -> list[tuple[StrategyAllocation, BaseStrategy]]:
         """Get all strategies that trade a specific symbol.
 
         Args:
@@ -173,7 +175,9 @@ class MultiStrategyProcessor:
                 data_with_indicators = strategy.calculate_indicators(data)
 
                 # Generate signal
-                signal = strategy.generate_signal(data_with_indicators, symbol, position)
+                signal = strategy.generate_signal(
+                    data_with_indicators, symbol, position
+                )
 
                 # Add strategy info to metadata
                 signal.metadata["strategy"] = alloc.name
@@ -332,11 +336,13 @@ class MultiStrategyProcessor:
 
         # Aggregate stop loss and take profit from contributing signals
         stop_losses = [
-            sig.stop_loss for _, sig in signals
+            sig.stop_loss
+            for _, sig in signals
             if sig.action == best_action and sig.stop_loss
         ]
         take_profits = [
-            sig.take_profit for _, sig in signals
+            sig.take_profit
+            for _, sig in signals
             if sig.action == best_action and sig.take_profit
         ]
 
@@ -346,7 +352,9 @@ class MultiStrategyProcessor:
             confidence=confidence,
             reason=f"Weighted ({confidence:.0%}): {', '.join(contributors)}",
             stop_loss=max(stop_losses) if stop_losses else None,  # Most conservative
-            take_profit=min(take_profits) if take_profits else None,  # Most conservative
+            take_profit=min(take_profits)
+            if take_profits
+            else None,  # Most conservative
             metadata={
                 "aggregation": "weighted",
                 "num_strategies": len(signals),
@@ -450,11 +458,7 @@ class MultiStrategyProcessor:
     @property
     def strategy_names(self) -> list[str]:
         """Get names of all active strategies."""
-        return [
-            alloc.name
-            for alloc in self.group.allocations
-            if alloc.enabled
-        ]
+        return [alloc.name for alloc in self.group.allocations if alloc.enabled]
 
     @property
     def min_bars_required(self) -> int:
