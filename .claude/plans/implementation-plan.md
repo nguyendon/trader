@@ -140,7 +140,7 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [x] Bollinger Bands strategy
 - [x] Mean Reversion strategy
 - [x] VWAP strategy
-- [ ] Pairs trading strategy
+- [x] Pairs trading strategy
 - [ ] Custom strategy loader (from file)
 
 ### 4.3 Risk Analytics ✅
@@ -170,12 +170,12 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 
 ## Phase 5: Advanced Features 🚀
 
-### 5.1 True Trailing Stops
-- [ ] WebSocket connection to Alpaca trading stream
-- [ ] Monitor order fills in real-time
-- [ ] Submit trailing stop order after entry fills
-- [ ] Track trailing stop state
-- [ ] Handle partial fills
+### 5.1 True Trailing Stops ✅
+- [x] WebSocket connection to Alpaca trading stream
+- [x] Monitor order fills in real-time
+- [x] Submit trailing stop order after entry fills
+- [x] Track trailing stop state
+- [x] Handle partial fills
 
 ### 5.2 Scheduled Trading
 - [ ] Cron-like scheduler for strategy runs
@@ -218,7 +218,7 @@ trader/
 │   ├── storage/        # Database, persistence
 │   ├── notifications/  # Discord, alerts
 │   └── cli.py          # CLI entry point
-├── tests/              # Test suite (335 tests)
+├── tests/              # Test suite (382 tests)
 ├── .claude/            # Claude skills & plans
 ├── justfile            # Dev commands
 └── pyproject.toml      # Project config
@@ -236,6 +236,7 @@ trader/
 | 4 | Portfolio rebalancing | 4.1 | ✅ Done |
 | 5 | More strategies (Bollinger, Mean Reversion, VWAP) | 4.2 | ✅ Done |
 | 6 | Risk analytics (VaR, correlation, beta) | 4.3 | ✅ Done |
-| 7 | Session & history persistence | 4.4 | Next |
-| 8 | True trailing stops (WebSocket) | 5.1 | Planned |
-| 9 | Scheduled trading | 5.2 | Planned |
+| 7 | Pairs trading strategy | 4.2 | ✅ Done |
+| 8 | True trailing stops (WebSocket) | 5.1 | ✅ Done |
+| 9 | Session & history persistence | 4.4 | Next |
+| 10 | Scheduled trading | 5.2 | Planned |

@@ -148,6 +148,36 @@ def _register_builtin_strategies() -> None:
     except ImportError:
         pass
 
+    # Pairs Trading strategies
+    try:
+        from trader.strategies.builtin.pairs import (
+            CointegrationPairsStrategy,
+            PairsTradingStrategy,
+        )
+
+        register_strategy(
+            "pairs",
+            PairsTradingStrategy,
+            {
+                "primary_symbol": "AAPL",
+                "secondary_symbol": "MSFT",
+                "lookback": 60,
+                "entry_zscore": 2.0,
+            },
+        )
+        register_strategy(
+            "pairs_coint",
+            CointegrationPairsStrategy,
+            {
+                "primary_symbol": "AAPL",
+                "secondary_symbol": "MSFT",
+                "lookback": 60,
+                "entry_zscore": 2.0,
+            },
+        )
+    except ImportError:
+        pass
+
 
 # Auto-register on import
 _register_builtin_strategies()

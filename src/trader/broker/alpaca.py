@@ -52,10 +52,19 @@ class AlpacaBroker(BaseBroker):
         self._secret_key = secret_key
         self._paper = paper
         self._client: TradingClient | None = None
+        self._trailing_stop_manager: Any = None  # Lazy loaded
 
     @property
     def name(self) -> str:
         return "alpaca"
+
+    @property
+    def trailing_stop_manager(self) -> Any:
+        """Get or create the trailing stop manager."""
+        if self._trailing_stop_manager is None:
+            from trader.broker.trailing_stop_manager import TrailingStopManager
+            self._trailing_stop_manager = TrailingStopManager(self)
+        return self._trailing_stop_manager
 
     @property
     def is_paper(self) -> bool:
@@ -386,6 +395,71 @@ class AlpacaBroker(BaseBroker):
         )
 
         return order
+
+    async def submit_order_with_trailing_stop(
+        self,
+        order: Order,
+        trail_percent: float | None = None,
+        trail_price: Decimal | None = None,
+        use_websocket: bool = True,
+    ) -> Order:
+        """Submit an order with a true trailing stop using WebSocket monitoring.
+
+        This method submits the entry order and registers a trailing stop
+        to be activated when the entry fills. Unlike bracket orders with
+        fixed stops, this uses Alpaca's native trailing stop functionality.
+
+        Args:
+            order: The entry order to submit
+            trail_percent: Trail by percentage (e.g., 0.05 = 5%)
+            trail_price: Trail by fixed dollar amount
+            use_websocket: If True, use WebSocket to monitor fills.
+                          If False, falls back to fixed stop (legacy behavior).
+
+        Returns:
+            The submitted order with broker_order_id set
+        """
+        if trail_percent is None and trail_price is None:
+            raise ValueError("Either trail_percent or trail_price must be specified")
+
+        if not use_websocket:
+            # Fall back to legacy fixed stop behavior
+            order.trailing_stop_pct = trail_percent
+            order.trailing_stop_price = trail_price
+            return await self.submit_order(order)
+
+        # Submit the entry order as a simple order
+        order.order_class = OrderClass.SIMPLE
+        submitted_order = await self.submit_order(order)
+
+        if submitted_order.broker_order_id:
+            # Register trailing stop to be activated on fill
+            side = "sell" if order.side == OrderSide.BUY else "buy"
+            self.trailing_stop_manager.register_trailing_stop(
+                entry_order_id=submitted_order.broker_order_id,
+                symbol=order.symbol,
+                quantity=order.quantity,
+                trail_percent=trail_percent,
+                trail_price=trail_price,
+                side=side,
+            )
+            logger.info(
+                f"Registered trailing stop for {order.symbol}: "
+                f"trail_pct={trail_percent}, trail_price={trail_price}"
+            )
+
+        return submitted_order
+
+    async def start_trailing_stop_monitor(self) -> None:
+        """Start the trailing stop WebSocket monitor.
+
+        Call this before submitting orders with trailing stops.
+        """
+        await self.trailing_stop_manager.start()
+
+    async def stop_trailing_stop_monitor(self) -> None:
+        """Stop the trailing stop WebSocket monitor."""
+        await self.trailing_stop_manager.stop()
 
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order by ID."""
