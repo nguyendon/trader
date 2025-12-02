@@ -2996,6 +2996,479 @@ def rebalance_equal(
 # =============================================================================
 
 
+# =============================================================================
+# Risk Analytics Commands
+# =============================================================================
+
+
+@app.command("risk")
+def risk_analysis(
+    symbols: str = typer.Argument(
+        "mag7", help="Comma-separated symbols or group name (mag7, faang, tech)"
+    ),
+    days: int = typer.Option(365, "--days", "-d", help="Days of history for analysis"),
+    benchmark: str = typer.Option("SPY", "--benchmark", "-b", help="Benchmark symbol"),
+    confidence: float = typer.Option(
+        95.0, "--confidence", "-c", help="VaR confidence level (e.g., 95 or 99)"
+    ),
+) -> None:
+    """
+    Calculate portfolio risk metrics (VaR, volatility, Sharpe, beta).
+
+    Examples:
+      trader risk mag7 --days 365
+      trader risk AAPL,MSFT,GOOGL --benchmark SPY
+      trader risk tech --confidence 99
+    """
+    # Parse symbols
+    if symbols.lower() in STOCK_GROUPS:
+        symbol_list = STOCK_GROUPS[symbols.lower()]
+        console.print(f"\n[bold blue]Risk Analysis: {symbols.upper()}[/bold blue]")
+    else:
+        symbol_list = [s.strip().upper() for s in symbols.split(",")]
+        console.print(f"\n[bold blue]Risk Analysis: {len(symbol_list)} Stocks[/bold blue]")
+
+    asyncio.run(
+        _run_risk_analysis(
+            symbols=symbol_list,
+            days=days,
+            benchmark=benchmark,
+            confidence_level=confidence / 100,
+        )
+    )
+
+
+async def _run_risk_analysis(
+    symbols: list[str],
+    days: int,
+    benchmark: str,
+    confidence_level: float,
+) -> None:
+    """Run risk analysis for given symbols."""
+    import pandas as pd
+
+    from trader.risk.analytics import PortfolioAnalytics
+
+    settings = get_settings()
+    fetcher = get_data_fetcher(settings)
+    analytics = PortfolioAnalytics()
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    console.print(f"Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    console.print(f"Benchmark: {benchmark}")
+    console.print(f"VaR Confidence: {confidence_level * 100:.0f}%\n")
+
+    # Fetch benchmark data
+    benchmark_data = None
+    benchmark_returns = None
+    with console.status("[bold green]Fetching benchmark data..."):
+        try:
+            benchmark_df = await fetcher.fetch_bars_df(
+                symbol=benchmark,
+                timeframe=TimeFrame.DAY,
+                start=start_date,
+                end=end_date,
+            )
+            if len(benchmark_df) > 1:
+                benchmark_data = benchmark_df["close"]
+                benchmark_returns = analytics.calculate_returns(benchmark_data, method="simple")
+        except Exception as e:
+            logger.warning(f"Could not fetch benchmark {benchmark}: {e}")
+
+    # Fetch data for all symbols
+    price_data: dict[str, pd.Series] = {}
+    returns_data: dict[str, pd.Series] = {}
+    results: list[dict] = []
+
+    with console.status("[bold green]Fetching price data...") as status:
+        for symbol in symbols:
+            status.update(f"[bold green]Fetching {symbol}...")
+            try:
+                data = await fetcher.fetch_bars_df(
+                    symbol=symbol,
+                    timeframe=TimeFrame.DAY,
+                    start=start_date,
+                    end=end_date,
+                )
+
+                if len(data) < 20:
+                    continue
+
+                price_data[symbol] = data["close"]
+                returns = analytics.calculate_returns(data["close"], method="simple")
+                returns_data[symbol] = returns
+
+                # Calculate individual metrics
+                var = analytics.calculate_var(returns, confidence_level)
+                vol = analytics.calculate_volatility(returns)
+                sharpe = analytics.calculate_sharpe_ratio(returns)
+                sortino = analytics.calculate_sortino_ratio(returns)
+                max_dd, _, _ = analytics.calculate_max_drawdown(data["close"])
+
+                beta = None
+                alpha = None
+                if benchmark_returns is not None:
+                    beta = analytics.calculate_beta(returns, benchmark_returns)
+                    alpha = analytics.calculate_alpha(returns, benchmark_returns)
+
+                total_return = (data["close"].iloc[-1] - data["close"].iloc[0]) / data["close"].iloc[0]
+
+                results.append({
+                    "symbol": symbol,
+                    "return": total_return * 100,
+                    "volatility": vol * 100,
+                    "var": var * 100,
+                    "sharpe": sharpe,
+                    "sortino": sortino,
+                    "max_dd": max_dd * 100,
+                    "beta": beta,
+                    "alpha": alpha * 100 if alpha else None,
+                })
+
+            except Exception as e:
+                logger.debug(f"Error fetching {symbol}: {e}")
+                continue
+
+    if not results:
+        console.print("[yellow]No data available for analysis.[/yellow]")
+        return
+
+    # Display individual stock metrics
+    console.print("[bold]Individual Stock Risk Metrics:[/bold]\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Return", justify="right")
+    table.add_column("Volatility", justify="right")
+    table.add_column(f"VaR {confidence_level*100:.0f}%", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Sortino", justify="right")
+    table.add_column("Max DD", justify="right")
+    if benchmark_returns is not None:
+        table.add_column("Beta", justify="right")
+        table.add_column("Alpha", justify="right")
+
+    for r in sorted(results, key=lambda x: -x["sharpe"]):
+        ret_color = "green" if r["return"] >= 0 else "red"
+        ret_str = f"[{ret_color}]{r['return']:+.1f}%[/{ret_color}]"
+
+        sharpe_color = "green" if r["sharpe"] >= 1 else "yellow" if r["sharpe"] >= 0 else "red"
+        sharpe_str = f"[{sharpe_color}]{r['sharpe']:.2f}[/{sharpe_color}]"
+
+        sortino_color = "green" if r["sortino"] >= 1.5 else "yellow" if r["sortino"] >= 0 else "red"
+        sortino_str = f"[{sortino_color}]{r['sortino']:.2f}[/{sortino_color}]"
+
+        row = [
+            r["symbol"],
+            ret_str,
+            f"{r['volatility']:.1f}%",
+            f"{r['var']:.1f}%",
+            sharpe_str,
+            sortino_str,
+            f"[red]{r['max_dd']:.1f}%[/red]",
+        ]
+
+        if benchmark_returns is not None:
+            beta_str = f"{r['beta']:.2f}" if r["beta"] else "-"
+            alpha_str = f"{r['alpha']:+.1f}%" if r["alpha"] else "-"
+            row.extend([beta_str, alpha_str])
+
+        table.add_row(*row)
+
+    console.print(table)
+
+    # Calculate portfolio metrics (equal weight)
+    if len(results) > 1:
+        console.print("\n[bold]Portfolio Metrics (Equal Weight):[/bold]\n")
+
+        weights = {s: 1.0 / len(returns_data) for s in returns_data}
+        portfolio_var = analytics.calculate_portfolio_var(weights, returns_data, confidence_level)
+
+        # Calculate correlation matrix
+        corr_result = analytics.calculate_correlation_matrix(price_data)
+
+        # Build portfolio returns
+        portfolio_returns = pd.DataFrame(returns_data).mean(axis=1)
+        port_vol = analytics.calculate_volatility(portfolio_returns)
+        port_sharpe = analytics.calculate_sharpe_ratio(portfolio_returns)
+        port_sortino = analytics.calculate_sortino_ratio(portfolio_returns)
+
+        # Portfolio total return
+        portfolio_prices = pd.DataFrame(price_data)
+        portfolio_value = portfolio_prices.mean(axis=1)
+        port_return = (portfolio_value.iloc[-1] - portfolio_value.iloc[0]) / portfolio_value.iloc[0]
+        port_max_dd, _, _ = analytics.calculate_max_drawdown(portfolio_value)
+
+        port_beta = None
+        if benchmark_returns is not None:
+            port_beta = analytics.calculate_beta(portfolio_returns, benchmark_returns)
+
+        stats_table = Table(show_header=False, box=None)
+        stats_table.add_column("Metric", style="dim")
+        stats_table.add_column("Value", style="bold")
+
+        ret_color = "green" if port_return >= 0 else "red"
+        stats_table.add_row("Total Return", f"[{ret_color}]{port_return * 100:+.1f}%[/{ret_color}]")
+        stats_table.add_row("Volatility (Ann.)", f"{port_vol * 100:.1f}%")
+        stats_table.add_row(f"VaR {confidence_level*100:.0f}%", f"{portfolio_var * 100:.2f}%")
+        stats_table.add_row("Sharpe Ratio", f"{port_sharpe:.2f}")
+        stats_table.add_row("Sortino Ratio", f"{port_sortino:.2f}")
+        stats_table.add_row("Max Drawdown", f"[red]{port_max_dd * 100:.1f}%[/red]")
+        if port_beta is not None:
+            stats_table.add_row("Beta vs " + benchmark, f"{port_beta:.2f}")
+
+        console.print(stats_table)
+
+        # Show correlation matrix if requested
+        if len(corr_result.symbols) <= 10:
+            console.print("\n[bold]Correlation Matrix:[/bold]\n")
+
+            corr_table = Table(show_header=True, header_style="bold")
+            corr_table.add_column("")
+            for sym in corr_result.symbols:
+                corr_table.add_column(sym, justify="center")
+
+            for sym in corr_result.symbols:
+                row = [f"[bold]{sym}[/bold]"]
+                for other in corr_result.symbols:
+                    corr = corr_result.matrix.loc[sym, other]
+                    if sym == other:
+                        row.append("[dim]1.00[/dim]")
+                    elif corr >= 0.7:
+                        row.append(f"[red]{corr:.2f}[/red]")
+                    elif corr >= 0.4:
+                        row.append(f"[yellow]{corr:.2f}[/yellow]")
+                    else:
+                        row.append(f"[green]{corr:.2f}[/green]")
+                corr_table.add_row(*row)
+
+            console.print(corr_table)
+            console.print("\n[dim]Correlation: [green]< 0.4[/green] low | [yellow]0.4-0.7[/yellow] moderate | [red]> 0.7[/red] high[/dim]")
+
+    console.print()
+
+
+@app.command("var")
+def value_at_risk(
+    symbol: str = typer.Argument(..., help="Symbol to analyze"),
+    days: int = typer.Option(365, "--days", "-d", help="Days of history"),
+    confidence: float = typer.Option(95.0, "--confidence", "-c", help="Confidence level"),
+    amount: float = typer.Option(10000.0, "--amount", "-a", help="Investment amount ($)"),
+) -> None:
+    """
+    Calculate Value at Risk for a single position.
+
+    Shows potential loss at specified confidence level.
+
+    Example: trader var AAPL --amount 50000 --confidence 99
+    """
+    asyncio.run(_calculate_var(symbol, days, confidence / 100, amount))
+
+
+async def _calculate_var(
+    symbol: str,
+    days: int,
+    confidence_level: float,
+    amount: float,
+) -> None:
+    """Calculate VaR for a symbol."""
+    from trader.risk.analytics import PortfolioAnalytics
+
+    settings = get_settings()
+    fetcher = get_data_fetcher(settings)
+    analytics = PortfolioAnalytics()
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    symbol = symbol.upper()
+    console.print(f"\n[bold blue]Value at Risk: {symbol}[/bold blue]\n")
+
+    with console.status(f"[bold green]Fetching {symbol} data..."):
+        try:
+            data = await fetcher.fetch_bars_df(
+                symbol=symbol,
+                timeframe=TimeFrame.DAY,
+                start=start_date,
+                end=end_date,
+            )
+        except Exception as e:
+            console.print(f"[red]Error fetching data: {e}[/red]")
+            return
+
+    if len(data) < 20:
+        console.print("[yellow]Insufficient data for VaR calculation.[/yellow]")
+        return
+
+    returns = analytics.calculate_returns(data["close"], method="simple")
+
+    # Calculate various VaR metrics
+    var_hist = analytics.calculate_var(returns, confidence_level, method="historical")
+    var_param = analytics.calculate_var(returns, confidence_level, method="parametric")
+    cvar = analytics.calculate_cvar(returns, confidence_level)
+    vol = analytics.calculate_volatility(returns)
+
+    # Dollar amounts
+    var_hist_dollar = amount * var_hist
+    var_param_dollar = amount * var_param
+    cvar_dollar = amount * cvar
+
+    console.print(f"Investment Amount: ${amount:,.2f}")
+    console.print(f"Confidence Level: {confidence_level * 100:.0f}%")
+    console.print(f"Analysis Period: {len(returns)} trading days")
+    console.print(f"Annualized Volatility: {vol * 100:.1f}%\n")
+
+    table = Table(title=f"{symbol} Value at Risk", show_header=True, header_style="bold cyan")
+    table.add_column("Method", style="bold")
+    table.add_column("Daily VaR %", justify="right")
+    table.add_column("Daily VaR $", justify="right")
+    table.add_column("Description")
+
+    table.add_row(
+        "Historical VaR",
+        f"[red]{var_hist * 100:.2f}%[/red]",
+        f"[red]${var_hist_dollar:,.2f}[/red]",
+        f"{confidence_level*100:.0f}% of days, loss won't exceed this",
+    )
+
+    table.add_row(
+        "Parametric VaR",
+        f"[red]{var_param * 100:.2f}%[/red]",
+        f"[red]${var_param_dollar:,.2f}[/red]",
+        "Assumes normal distribution",
+    )
+
+    table.add_row(
+        "CVaR (Expected Shortfall)",
+        f"[red]{cvar * 100:.2f}%[/red]",
+        f"[red]${cvar_dollar:,.2f}[/red]",
+        "Avg loss when exceeding VaR",
+    )
+
+    console.print(table)
+
+    # Additional context
+    console.print("\n[bold]Interpretation:[/bold]")
+    console.print(
+        f"  With {confidence_level*100:.0f}% confidence, your daily loss on ${amount:,.0f} "
+        f"won't exceed [red]${var_hist_dollar:,.2f}[/red]"
+    )
+    console.print(
+        f"  In the worst {(1-confidence_level)*100:.0f}% of days, expect to lose "
+        f"around [red]${cvar_dollar:,.2f}[/red] on average"
+    )
+    console.print()
+
+
+@app.command("correlation")
+def correlation_matrix(
+    symbols: str = typer.Argument(
+        "mag7", help="Comma-separated symbols or group name"
+    ),
+    days: int = typer.Option(180, "--days", "-d", help="Days of history"),
+) -> None:
+    """
+    Show correlation matrix between assets.
+
+    Lower correlation = better diversification.
+
+    Example: trader correlation AAPL,MSFT,GOOGL,AMZN
+    """
+    # Parse symbols
+    if symbols.lower() in STOCK_GROUPS:
+        symbol_list = STOCK_GROUPS[symbols.lower()]
+    else:
+        symbol_list = [s.strip().upper() for s in symbols.split(",")]
+
+    asyncio.run(_show_correlation(symbol_list, days))
+
+
+async def _show_correlation(symbols: list[str], days: int) -> None:
+    """Display correlation matrix."""
+    import pandas as pd
+
+    from trader.risk.analytics import PortfolioAnalytics
+
+    settings = get_settings()
+    fetcher = get_data_fetcher(settings)
+    analytics = PortfolioAnalytics()
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    console.print("\n[bold blue]Correlation Matrix[/bold blue]")
+    console.print(f"Period: {days} days\n")
+
+    # Fetch data
+    price_data: dict[str, pd.Series] = {}
+
+    with console.status("[bold green]Fetching price data...") as status:
+        for symbol in symbols:
+            status.update(f"[bold green]Fetching {symbol}...")
+            try:
+                data = await fetcher.fetch_bars_df(
+                    symbol=symbol,
+                    timeframe=TimeFrame.DAY,
+                    start=start_date,
+                    end=end_date,
+                )
+                if len(data) > 20:
+                    price_data[symbol] = data["close"]
+            except Exception as e:
+                logger.debug(f"Error fetching {symbol}: {e}")
+
+    if len(price_data) < 2:
+        console.print("[yellow]Need at least 2 symbols for correlation.[/yellow]")
+        return
+
+    corr_result = analytics.calculate_correlation_matrix(price_data)
+
+    # Display matrix
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("")
+    for sym in corr_result.symbols:
+        table.add_column(sym, justify="center")
+
+    for sym in corr_result.symbols:
+        row = [f"[bold]{sym}[/bold]"]
+        for other in corr_result.symbols:
+            corr = corr_result.matrix.loc[sym, other]
+            if sym == other:
+                row.append("[dim]1.00[/dim]")
+            elif corr >= 0.8:
+                row.append(f"[red bold]{corr:.2f}[/red bold]")
+            elif corr >= 0.6:
+                row.append(f"[red]{corr:.2f}[/red]")
+            elif corr >= 0.4:
+                row.append(f"[yellow]{corr:.2f}[/yellow]")
+            elif corr >= 0.2:
+                row.append(f"[green]{corr:.2f}[/green]")
+            else:
+                row.append(f"[green bold]{corr:.2f}[/green bold]")
+        table.add_row(*row)
+
+    console.print(table)
+
+    # Summary stats
+    import numpy as np
+    avg_corr = corr_result.matrix.values[~np.eye(len(corr_result.symbols), dtype=bool)].mean()
+
+    console.print("\n[bold]Diversification Analysis:[/bold]")
+    console.print(f"  Average Correlation: {avg_corr:.2f}")
+
+    if avg_corr >= 0.7:
+        console.print("  [red]⚠ High correlation - limited diversification benefit[/red]")
+    elif avg_corr >= 0.4:
+        console.print("  [yellow]Moderate correlation - some diversification[/yellow]")
+    else:
+        console.print("  [green]✓ Low correlation - good diversification[/green]")
+
+    console.print("\n[dim]Legend: [green bold]< 0.2[/green bold] very low | [green]0.2-0.4[/green] low | [yellow]0.4-0.6[/yellow] moderate | [red]0.6-0.8[/red] high | [red bold]> 0.8[/red bold] very high[/dim]")
+    console.print()
+
+
 @app.command("dashboard")
 def dashboard(
     refresh: float = typer.Option(
