@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sys
+import time
 import typing
 from collections import deque
 from datetime import UTC, datetime
@@ -237,21 +238,31 @@ class TradingDashboard:
             with Live(
                 self._generate_layout(),
                 console=self.console,
-                refresh_per_second=1 / self.refresh_rate,
+                refresh_per_second=4,  # Refresh display frequently
                 screen=True,
             ) as live:
+                last_update = 0.0
+
                 while self._running:
                     try:
-                        # Check for keyboard input
+                        # Check for keyboard input frequently
                         if key_queue:
-                            try:
-                                key = key_queue.get_nowait()
-                                await self._handle_key(key)
-                            except asyncio.QueueEmpty:
-                                pass
+                            # Drain all pending keys
+                            while True:
+                                try:
+                                    key = key_queue.get_nowait()
+                                    await self._handle_key(key)
+                                except asyncio.QueueEmpty:
+                                    break
 
-                        live.update(await self._generate_layout_async())
-                        await asyncio.sleep(self.refresh_rate)
+                        # Update data at refresh_rate interval
+                        now = time.time()
+                        if now - last_update >= self.refresh_rate:
+                            live.update(await self._generate_layout_async())
+                            last_update = now
+
+                        # Short sleep to be responsive to keys
+                        await asyncio.sleep(0.05)
                     except asyncio.CancelledError:
                         break
                     except Exception as e:
@@ -273,7 +284,7 @@ class TradingDashboard:
             await self._handle_menu_key(key)
             return
 
-        if key == "q":
+        if key in ("q", "ESC"):
             self._running = False
             self._status_message = "Quitting..."
         elif key == "r":
