@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     alpaca_paper: bool = Field(default=True)
     alpaca_base_url: str | None = Field(default=None)
 
+    # Sentiment API settings (Alpha Vantage - free tier available)
+    alphavantage_api_key: SecretStr = Field(default=SecretStr(""))
+
     # Trading settings
     default_symbols: list[str] = Field(default=["AAPL", "MSFT", "GOOGL"])
     trading_mode: Literal["backtest", "paper", "live"] = Field(default="paper")
@@ -61,6 +64,11 @@ class Settings(BaseSettings):
             self.alpaca_api_key.get_secret_value()
             and self.alpaca_secret_key.get_secret_value()
         )
+
+    @property
+    def has_alphavantage_credentials(self) -> bool:
+        """Check if Alpha Vantage API key is configured."""
+        return bool(self.alphavantage_api_key.get_secret_value())
 
     @property
     def alpaca_url(self) -> str:

@@ -188,7 +188,16 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [x] Track trailing stop state
 - [x] Handle partial fills
 
-### 5.2 Scheduled Trading
+### 5.2 Sentiment Integration ✅
+- [x] Alpha Vantage news sentiment API integration
+- [x] Mock sentiment fetcher for testing
+- [x] SentimentStrategy (standalone, filter, boost modes)
+- [x] SentimentMomentumStrategy (combined sentiment + momentum)
+- [x] CLI: `trader sentiment AAPL` - Analyze news sentiment
+- [x] Settings: ALPHAVANTAGE_API_KEY support
+- [x] 48 unit tests for sentiment module
+
+### 5.3 Scheduled Trading
 - [ ] Cron-like scheduler for strategy runs
 - [ ] Market open/close triggers
 - [ ] CLI: `trader schedule AAPL --strategy sma --at "09:35"`
@@ -252,5 +261,6 @@ trader/
 | 9 | Walk-forward optimization | 4.5 | ✅ Done |
 | 10 | Transaction cost modeling | 4.5 | ✅ Done |
 | 11 | Monte Carlo simulation | 4.5 | ✅ Done |
-| 12 | Session & history persistence | 4.4 | Next |
-| 13 | Scheduled trading | 5.2 | Planned |
+| 12 | Sentiment integration | 5.2 | ✅ Done |
+| 13 | Session & history persistence | 4.4 | Next |
+| 14 | Scheduled trading | 5.3 | Planned |

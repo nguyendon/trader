@@ -178,6 +178,37 @@ def _register_builtin_strategies() -> None:
     except ImportError:
         pass
 
+    # Sentiment strategies
+    try:
+        from trader.strategies.builtin.sentiment import (
+            SentimentMomentumStrategy,
+            SentimentStrategy,
+        )
+
+        register_strategy(
+            "sentiment",
+            SentimentStrategy,
+            {
+                "bullish_threshold": 0.15,
+                "bearish_threshold": -0.15,
+                "min_articles": 3,
+                "lookback_hours": 24,
+                "mode": "standalone",
+            },
+        )
+        register_strategy(
+            "sentiment_momentum",
+            SentimentMomentumStrategy,
+            {
+                "momentum_days": 20,
+                "sentiment_threshold": 0.10,
+                "min_articles": 2,
+                "lookback_hours": 48,
+            },
+        )
+    except ImportError:
+        pass
+
 
 # Auto-register on import
 _register_builtin_strategies()

@@ -3929,5 +3929,123 @@ async def _run_dashboard(refresh_rate: float) -> None:
         await broker.disconnect()
 
 
+@app.command()
+def sentiment(
+    symbols: str = typer.Argument(
+        ...,
+        help="Comma-separated symbols or group name (mag7, faang, tech)",
+    ),
+    lookback: int = typer.Option(24, "--lookback", "-l", help="Hours of news to analyze"),
+    detailed: bool = typer.Option(False, "--detailed", "-d", help="Show individual articles"),
+) -> None:
+    """
+    Analyze news sentiment for stocks.
+
+    Fetches recent news articles and shows sentiment analysis including:
+    - Overall sentiment score (-1.0 to +1.0)
+    - Bullish/bearish/neutral article counts
+    - Top headlines with sentiment
+
+    Requires Alpha Vantage API key (ALPHAVANTAGE_API_KEY in .env).
+    Uses mock data if no API key is configured.
+
+    Examples:
+
+        trader sentiment AAPL
+        trader sentiment mag7 --lookback 48
+        trader sentiment NVDA,AMD,INTC --detailed
+    """
+    asyncio.run(_run_sentiment(symbols, lookback, detailed))
+
+
+async def _run_sentiment(symbols: str, lookback: int, detailed: bool) -> None:
+    """Async implementation of sentiment command."""
+    from trader.data.sentiment import get_sentiment_fetcher, fetch_multi_symbol_sentiment
+
+    settings = get_settings()
+
+    # Parse symbols
+    symbol_list = _parse_symbols(symbols)
+
+    console.print("\n[bold blue]News Sentiment Analysis[/bold blue]")
+    console.print(f"Symbols: {', '.join(symbol_list)}")
+    console.print(f"Lookback: {lookback} hours")
+
+    if not settings.has_alphavantage_credentials:
+        console.print(
+            "\n[yellow]Note: No Alpha Vantage API key found. Using mock sentiment data.[/yellow]"
+        )
+        console.print("[dim]Get a free API key at https://www.alphavantage.co/[/dim]")
+
+    # Fetch sentiment
+    fetcher = get_sentiment_fetcher(settings)
+
+    with console.status("[bold green]Fetching sentiment data..."):
+        sentiment_data = await fetch_multi_symbol_sentiment(
+            symbol_list, fetcher, lookback_hours=lookback
+        )
+
+    # Display results table
+    table = Table(title="Sentiment Summary", show_header=True, header_style="bold cyan")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Score", justify="right")
+    table.add_column("Label", justify="center")
+    table.add_column("Articles", justify="right")
+    table.add_column("Bullish", justify="right", style="green")
+    table.add_column("Bearish", justify="right", style="red")
+    table.add_column("Neutral", justify="right", style="dim")
+
+    for symbol in symbol_list:
+        data = sentiment_data.get(symbol)
+        if data is None:
+            table.add_row(symbol, "-", "N/A", "0", "0", "0", "0")
+            continue
+
+        # Color code the score
+        score_str = f"{data.overall_score:+.2f}"
+        if data.overall_score >= 0.15:
+            score_str = f"[green]{score_str}[/green]"
+        elif data.overall_score <= -0.15:
+            score_str = f"[red]{score_str}[/red]"
+
+        # Color code the label
+        label = data.overall_label.value
+        if "Bullish" in label:
+            label = f"[green]{label}[/green]"
+        elif "Bearish" in label:
+            label = f"[red]{label}[/red]"
+
+        table.add_row(
+            symbol,
+            score_str,
+            label,
+            str(data.article_count),
+            str(data.bullish_count),
+            str(data.bearish_count),
+            str(data.neutral_count),
+        )
+
+    console.print()
+    console.print(table)
+
+    # Show detailed articles if requested
+    if detailed:
+        for symbol in symbol_list:
+            data = sentiment_data.get(symbol)
+            if data is None or not data.articles:
+                continue
+
+            console.print(f"\n[bold]{symbol} - Recent Headlines[/bold]")
+            for article in data.articles[:5]:  # Top 5 articles
+                score_str = f"{article.sentiment_score:+.2f}"
+                if article.sentiment_score >= 0.15:
+                    score_str = f"[green]{score_str}[/green]"
+                elif article.sentiment_score <= -0.15:
+                    score_str = f"[red]{score_str}[/red]"
+
+                console.print(f"  {score_str} | {article.title[:70]}...")
+                console.print(f"        [dim]{article.source} - {article.published_at:%Y-%m-%d %H:%M}[/dim]")
+
+
 if __name__ == "__main__":
     app()
