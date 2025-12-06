@@ -4047,5 +4047,168 @@ async def _run_sentiment(symbols: str, lookback: int, detailed: bool) -> None:
                 console.print(f"        [dim]{article.source} - {article.published_at:%Y-%m-%d %H:%M}[/dim]")
 
 
+@app.command()
+def web_sentiment(
+    symbols: str = typer.Argument(
+        ...,
+        help="Comma-separated symbols or group name (mag7, faang, tech)",
+    ),
+    lookback: int = typer.Option(24, "--lookback", "-l", help="Hours of news to analyze"),
+    detailed: bool = typer.Option(False, "--detailed", "-d", help="Show individual articles"),
+    reddit_only: bool = typer.Option(False, "--reddit", "-r", help="Only fetch from Reddit"),
+    rss_only: bool = typer.Option(False, "--rss", help="Only fetch from RSS feeds"),
+) -> None:
+    """
+    Analyze sentiment by scraping Reddit and RSS feeds.
+
+    Uses VADER for local sentiment analysis - no paid API required.
+    Reddit requires free API credentials (REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET).
+    RSS feeds work without any credentials.
+
+    Sources:
+    - Reddit: r/wallstreetbets, r/stocks, r/investing, r/stockmarket
+    - RSS: Yahoo Finance, Google News (symbol-specific feeds)
+
+    Examples:
+
+        trader web-sentiment AAPL
+        trader web-sentiment mag7 --lookback 48
+        trader web-sentiment NVDA --reddit --detailed
+        trader web-sentiment TSLA --rss  # No Reddit credentials needed
+    """
+    asyncio.run(_run_web_sentiment(symbols, lookback, detailed, reddit_only, rss_only))
+
+
+async def _run_web_sentiment(
+    symbols: str,
+    lookback: int,
+    detailed: bool,
+    reddit_only: bool,
+    rss_only: bool,
+) -> None:
+    """Async implementation of web-sentiment command."""
+    from trader.data.web_sentiment import WebSentimentConfig, WebSentimentFetcher
+
+    settings = get_settings()
+
+    # Parse symbols
+    symbol_list = _parse_symbols(symbols)
+
+    console.print("\n[bold blue]Web Sentiment Analysis (Scraped)[/bold blue]")
+    console.print(f"Symbols: {', '.join(symbol_list)}")
+    console.print(f"Lookback: {lookback} hours")
+
+    # Configure fetcher
+    config = WebSentimentConfig(
+        reddit_enabled=not rss_only and settings.has_reddit_credentials,
+        reddit_client_id=settings.reddit_client_id if settings.has_reddit_credentials else "",
+        reddit_client_secret=(
+            settings.reddit_client_secret.get_secret_value()
+            if settings.has_reddit_credentials
+            else ""
+        ),
+        rss_enabled=not reddit_only,
+        lookback_hours=lookback,
+    )
+
+    sources = []
+    if config.reddit_enabled:
+        sources.append("Reddit")
+    if config.rss_enabled:
+        sources.append("RSS")
+    console.print(f"Sources: {', '.join(sources) if sources else 'None configured'}")
+
+    if not config.reddit_enabled and not rss_only:
+        console.print(
+            "\n[yellow]Note: No Reddit credentials found. Using RSS feeds only.[/yellow]"
+        )
+        console.print(
+            "[dim]Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env for Reddit data.[/dim]"
+        )
+        console.print("[dim]Get free credentials at https://www.reddit.com/prefs/apps[/dim]")
+
+    if not sources:
+        console.print("[red]Error: No data sources available.[/red]")
+        raise typer.Exit(1)
+
+    fetcher = WebSentimentFetcher(config)
+
+    # Fetch sentiment for each symbol
+    from trader.data.sentiment import SentimentData
+    results: dict[str, SentimentData | None] = {}
+    with console.status("[bold green]Scraping sentiment data..."):
+        for symbol in symbol_list:
+            try:
+                results[symbol] = await fetcher.fetch_sentiment(symbol, lookback)
+            except Exception as e:
+                logger.error(f"Error fetching sentiment for {symbol}: {e}")
+                results[symbol] = None
+
+    # Display results table
+    table = Table(title="Web Sentiment Summary", show_header=True, header_style="bold cyan")
+    table.add_column("Symbol", style="bold")
+    table.add_column("Score", justify="right")
+    table.add_column("Label", justify="center")
+    table.add_column("Articles", justify="right")
+    table.add_column("Bullish", justify="right", style="green")
+    table.add_column("Bearish", justify="right", style="red")
+    table.add_column("Neutral", justify="right", style="dim")
+
+    for symbol in symbol_list:
+        data = results.get(symbol)
+        if data is None:
+            table.add_row(symbol, "-", "N/A", "0", "0", "0", "0")
+            continue
+
+        # Color code the score
+        score_str = f"{data.overall_score:+.2f}"
+        if data.overall_score >= 0.15:
+            score_str = f"[green]{score_str}[/green]"
+        elif data.overall_score <= -0.15:
+            score_str = f"[red]{score_str}[/red]"
+
+        # Color code the label
+        label = data.overall_label.value
+        if "Bullish" in label:
+            label = f"[green]{label}[/green]"
+        elif "Bearish" in label:
+            label = f"[red]{label}[/red]"
+
+        table.add_row(
+            symbol,
+            score_str,
+            label,
+            str(data.article_count),
+            str(data.bullish_count),
+            str(data.bearish_count),
+            str(data.neutral_count),
+        )
+
+    console.print()
+    console.print(table)
+
+    # Show detailed articles if requested
+    if detailed:
+        for symbol in symbol_list:
+            data = results.get(symbol)
+            if data is None or not data.articles:
+                continue
+
+            console.print(f"\n[bold]{symbol} - Recent Posts/Articles[/bold]")
+            for article in data.articles[:10]:  # Top 10
+                score_str = f"{article.sentiment_score:+.2f}"
+                if article.sentiment_score >= 0.15:
+                    score_str = f"[green]{score_str}[/green]"
+                elif article.sentiment_score <= -0.15:
+                    score_str = f"[red]{score_str}[/red]"
+
+                # Truncate title
+                title = article.title[:65] + "..." if len(article.title) > 65 else article.title
+                console.print(f"  {score_str} | {title}")
+                console.print(
+                    f"        [dim]{article.source} - {article.published_at:%Y-%m-%d %H:%M}[/dim]"
+                )
+
+
 if __name__ == "__main__":
     app()

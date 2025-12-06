@@ -196,6 +196,12 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [x] CLI: `trader sentiment AAPL` - Analyze news sentiment
 - [x] Settings: ALPHAVANTAGE_API_KEY support
 - [x] 48 unit tests for sentiment module
+- [x] Web scraping sentiment (Reddit + RSS feeds)
+- [x] VADER local sentiment analysis (no API required)
+- [x] CLI: `trader web-sentiment AAPL` - Free sentiment scraping
+- [x] Reddit: r/wallstreetbets, r/stocks, r/investing
+- [x] RSS: Yahoo Finance, Google News feeds
+- [x] 24 unit tests for web sentiment
 
 ### 5.3 Scheduled Trading
 - [ ] Cron-like scheduler for strategy runs
