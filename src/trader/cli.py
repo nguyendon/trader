@@ -15,6 +15,7 @@ from trader.core.models import TimeFrame
 from trader.data.fetcher import get_data_fetcher
 from trader.engine.backtest import BacktestEngine, BacktestResult
 from trader.engine.costs import CostModel
+from trader.engine.montecarlo import MonteCarloSimulator
 from trader.engine.walkforward import WalkForwardOptimizer
 from trader.storage import get_trade_store
 from trader.strategies.registry import get_strategy, list_strategies
@@ -564,6 +565,137 @@ async def _run_backtest_costs(
             console.print("[yellow]Consider strategies with fewer trades.[/yellow]")
 
     console.print()
+
+
+@app.command("montecarlo")
+def montecarlo(
+    symbol: str = typer.Argument(..., help="Stock symbol to backtest"),
+    strategy: str = typer.Option(
+        "sma", "--strategy", "-S", help="Strategy: sma, rsi, macd, momentum"
+    ),
+    days: int = typer.Option(365, "--days", "-d", help="Number of days of history"),
+    simulations: int = typer.Option(
+        1000, "--simulations", "-n", help="Number of Monte Carlo simulations"
+    ),
+    method: str = typer.Option(
+        "shuffle", "--method", "-m", help="Method: shuffle, bootstrap, block_bootstrap"
+    ),
+    capital: float = typer.Option(100000.0, "--capital", "-c", help="Initial capital"),
+    seed: int = typer.Option(None, "--seed", help="Random seed for reproducibility"),
+) -> None:
+    """
+    Run Monte Carlo simulation on backtest results.
+
+    Monte Carlo randomizes trade order to show the range of possible
+    outcomes, not just the single historical path. This reveals whether
+    a good backtest was skill or luck.
+
+    Methods:
+    - shuffle: Randomly reorder trades (default)
+    - bootstrap: Resample trades with replacement
+    - block_bootstrap: Resample blocks of consecutive trades
+
+    Key metrics:
+    - Probability of Profit: % of simulations that were profitable
+    - Original Percentile: Where your result falls in the distribution
+      (>80% suggests luck, <20% suggests bad luck)
+    """
+    asyncio.run(
+        _run_montecarlo(
+            symbol=symbol,
+            strategy_name=strategy,
+            days=days,
+            simulations=simulations,
+            method=method,
+            capital=capital,
+            seed=seed,
+        )
+    )
+
+
+async def _run_montecarlo(
+    symbol: str,
+    strategy_name: str,
+    days: int,
+    simulations: int,
+    method: str,
+    capital: float,
+    seed: int | None,
+) -> None:
+    """Async implementation of Monte Carlo command."""
+    settings = get_settings()
+
+    # Get strategy
+    try:
+        strategy = get_strategy(strategy_name)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print("\n[bold blue]Monte Carlo Simulation[/bold blue]")
+    console.print(f"Symbol: {symbol}")
+    console.print(f"Strategy: {strategy.description}")
+    console.print(f"Period: {days} days")
+    console.print(f"Simulations: {simulations:,}")
+    console.print(f"Method: {method}")
+
+    # Get data fetcher
+    fetcher = get_data_fetcher(settings)
+
+    # Calculate date range
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    # Fetch data
+    with console.status(f"[bold green]Fetching data for {symbol}..."):
+        data = await fetcher.fetch_bars_df(
+            symbol=symbol,
+            timeframe=TimeFrame.DAY,
+            start=start_date,
+            end=end_date,
+        )
+
+    if len(data) == 0:
+        console.print("[red]Error: No data returned[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Fetched {len(data)} bars")
+
+    # Run backtest first
+    engine = BacktestEngine(initial_capital=capital)
+
+    with console.status("[bold green]Running backtest..."):
+        result = await engine.run(
+            strategy=strategy,
+            data=data,
+            symbol=symbol,
+        )
+
+    if len(result.trades) < 2:
+        console.print(f"[red]Error: Need at least 2 trades for Monte Carlo. Got {len(result.trades)}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Backtest complete: {len(result.trades)} trades, {result.total_return_pct:+.2f}% return")
+
+    # Run Monte Carlo simulation
+    simulator = MonteCarloSimulator(
+        n_simulations=simulations,
+        random_seed=seed,
+    )
+
+    with console.status(f"[bold green]Running {simulations:,} simulations..."):
+        if method == "shuffle":
+            mc_result = simulator.run_shuffle(result)
+        elif method == "bootstrap":
+            mc_result = simulator.run_bootstrap(result)
+        elif method == "block_bootstrap":
+            mc_result = simulator.run_block_bootstrap(result)
+        else:
+            console.print(f"[red]Unknown method: {method}[/red]")
+            raise typer.Exit(1)
+
+    # Print results
+    mc_result.print_summary()
 
 
 async def _run_backtest(

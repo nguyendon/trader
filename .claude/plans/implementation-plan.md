@@ -171,8 +171,11 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [x] Transaction cost modeling (commission, spread, slippage, market impact)
 - [x] Cost model presets (retail, active trader, institutional, HFT)
 - [x] Efficiency ratio calculation (test vs train performance)
+- [x] Monte Carlo simulation (shuffle, bootstrap, block bootstrap methods)
+- [x] Luck analysis (percentile ranking of original result)
 - [x] CLI: `trader walkforward` - Run walk-forward optimization
 - [x] CLI: `trader backtest-costs` - Compare results with different cost models
+- [x] CLI: `trader montecarlo` - Run Monte Carlo simulation on backtest
 
 ---
 
@@ -248,5 +251,6 @@ trader/
 | 8 | True trailing stops (WebSocket) | 5.1 | ✅ Done |
 | 9 | Walk-forward optimization | 4.5 | ✅ Done |
 | 10 | Transaction cost modeling | 4.5 | ✅ Done |
-| 11 | Session & history persistence | 4.4 | Next |
-| 12 | Scheduled trading | 5.2 | Planned |
+| 11 | Monte Carlo simulation | 4.5 | ✅ Done |
+| 12 | Session & history persistence | 4.4 | Next |
+| 13 | Scheduled trading | 5.2 | Planned |
