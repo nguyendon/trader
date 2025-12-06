@@ -305,16 +305,16 @@ class RSSNewsFetcher:
 
     # Default RSS feeds for financial news
     DEFAULT_FEEDS = [
-        # Yahoo Finance (supports ticker-specific feeds)
-        "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US",
-        # Google News (search-based)
+        # Google News (search-based, most reliable)
         "https://news.google.com/rss/search?q={symbol}+stock&hl=en-US&gl=US&ceid=US:en",
+        # Seeking Alpha (if available)
+        "https://seekingalpha.com/api/sa/combined/{symbol}.xml",
     ]
 
     # General market news feeds
     MARKET_FEEDS = [
-        "https://feeds.finance.yahoo.com/rss/2.0/headline?region=US&lang=en-US",
         "https://www.investing.com/rss/news.rss",
+        "https://feeds.marketwatch.com/marketwatch/topstories/",
     ]
 
     def __init__(self, custom_feeds: list[str] | None = None) -> None:

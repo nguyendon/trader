@@ -56,6 +56,13 @@ STOCK_GROUPS = {
 }
 
 
+def _parse_symbols(symbols: str) -> list[str]:
+    """Parse symbols string into list - handles group names and comma-separated."""
+    if symbols.lower() in STOCK_GROUPS:
+        return STOCK_GROUPS[symbols.lower()]
+    return [s.strip().upper() for s in symbols.split(",")]
+
+
 @app.command()
 def backtest(
     symbol: str = typer.Argument(..., help="Stock symbol to backtest (e.g., AAPL)"),
