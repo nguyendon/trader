@@ -203,12 +203,15 @@ Automated stock trading platform with backtesting, paper trading, and live tradi
 - [x] RSS: Yahoo Finance, Google News feeds
 - [x] 24 unit tests for web sentiment
 
-### 5.3 Scheduled Trading
-- [ ] Cron-like scheduler for strategy runs
-- [ ] Market open/close triggers
-- [ ] CLI: `trader schedule AAPL --strategy sma --at "09:35"`
-- [ ] Schedule management: `trader schedules list/add/remove`
-- [ ] Daemon mode: `trader daemon start`
+### 5.3 Scheduled Trading ✅
+- [x] Cron-like scheduler for strategy runs
+- [x] Market open/close triggers (market_open, market_close, pre_market, after_hours)
+- [x] CLI: `trader schedule AAPL --strategy sma --at "09:35"`
+- [x] Schedule management: `trader schedules`, `trader schedule-pause`, `trader schedule-resume`
+- [x] Daemon mode: `trader daemon`
+- [x] Holiday awareness (US market holidays)
+- [x] SQLite persistence for schedules
+- [x] 35 unit tests for scheduler
 
 ---
 
@@ -243,8 +246,9 @@ trader/
 │   ├── engine/         # Backtest & live engines
 │   ├── storage/        # Database, persistence
 │   ├── notifications/  # Discord, alerts
+│   ├── scheduler/      # Scheduled trading
 │   └── cli.py          # CLI entry point
-├── tests/              # Test suite (424 tests)
+├── tests/              # Test suite (459+ tests)
 ├── .claude/            # Claude skills & plans
 ├── justfile            # Dev commands
 └── pyproject.toml      # Project config
@@ -268,5 +272,5 @@ trader/
 | 10 | Transaction cost modeling | 4.5 | ✅ Done |
 | 11 | Monte Carlo simulation | 4.5 | ✅ Done |
 | 12 | Sentiment integration | 5.2 | ✅ Done |
-| 13 | Session & history persistence | 4.4 | Next |
-| 14 | Scheduled trading | 5.3 | Planned |
+| 13 | Scheduled trading | 5.3 | ✅ Done |
+| 14 | Session & history persistence | 4.4 | Next |

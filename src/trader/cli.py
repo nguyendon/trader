@@ -4217,5 +4217,375 @@ async def _run_web_sentiment(
                 )
 
 
+# ==================== Scheduling Commands ====================
+
+
+@app.command("schedule")
+def schedule_add(
+    symbols: str = typer.Argument(
+        ...,
+        help="Comma-separated symbols or group name (mag7, faang, tech)",
+    ),
+    name: str = typer.Option(
+        ..., "--name", "-n", help="Name for this schedule"
+    ),
+    strategy: str = typer.Option(
+        "sma", "--strategy", "-S", help="Strategy to run"
+    ),
+    cron: str | None = typer.Option(
+        None, "--cron", "-c", help="Cron expression (e.g., '30 9 * * 1-5' for 9:30 AM weekdays)"
+    ),
+    at: str | None = typer.Option(
+        None, "--at", "-a", help="Time of day (e.g., '09:35')"
+    ),
+    trigger: str | None = typer.Option(
+        None, "--trigger", "-t", help="Market trigger: open, close, premarket, afterhours"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", "-o", help="Minutes offset for market trigger (e.g., 5 for 5 min after open)"
+    ),
+    once: bool = typer.Option(
+        False, "--once", help="Run only once, then mark as completed"
+    ),
+    live: bool = typer.Option(
+        False, "--live", help="Use live trading (default is paper)"
+    ),
+) -> None:
+    """
+    Add a new trading schedule.
+
+    Schedules can be triggered by:
+    - Cron expression: --cron "30 9 * * 1-5" (9:30 AM on weekdays)
+    - Time of day: --at "09:35"
+    - Market events: --trigger open (or close, premarket, afterhours)
+
+    Examples:
+
+        trader schedule AAPL -n "Morning AAPL" --at "09:35"
+        trader schedule mag7 -n "MAG7 Open" --trigger open --offset 5
+        trader schedule NVDA,AMD -n "Chip scan" --cron "0 10 * * 1-5"
+    """
+    from trader.scheduler import TradingScheduler, get_schedule_store
+
+    symbol_list = _parse_symbols(symbols)
+    store = get_schedule_store()
+    scheduler = TradingScheduler(store=store)
+
+    # Validate that at least one trigger is specified
+    if not cron and not at and not trigger:
+        console.print("[red]Error: Must specify --cron, --at, or --trigger[/red]")
+        raise typer.Exit(1)
+
+    schedule = scheduler.add_schedule(
+        name=name,
+        symbols=symbol_list,
+        strategy_name=strategy,
+        cron=cron,
+        time_of_day=at,
+        market_trigger=trigger,
+        offset_minutes=offset,
+        run_once=once,
+        paper_mode=not live,
+    )
+
+    console.print(f"\n[green]Schedule added![/green]")
+    console.print(f"  ID: {schedule.id}")
+    console.print(f"  Name: {schedule.name}")
+    console.print(f"  Symbols: {', '.join(schedule.config.symbols)}")
+    console.print(f"  Strategy: {schedule.config.strategy_name}")
+    console.print(f"  Trigger: {schedule.config.trigger_description}")
+    console.print(f"  Mode: {'Live' if not schedule.config.paper_mode else 'Paper'}")
+    if schedule.next_run:
+        console.print(f"  Next run: {schedule.next_run:%Y-%m-%d %H:%M}")
+
+
+@app.command("schedules")
+def schedules_list(
+    all_schedules: bool = typer.Option(
+        False, "--all", "-a", help="Include paused and completed schedules"
+    ),
+) -> None:
+    """
+    List all trading schedules.
+
+    Shows active schedules by default. Use --all to include paused/completed.
+
+    Examples:
+
+        trader schedules
+        trader schedules --all
+    """
+    from trader.scheduler import ScheduleStatus, get_schedule_store
+
+    store = get_schedule_store()
+
+    if all_schedules:
+        schedules = store.get_all_schedules()
+    else:
+        schedules = store.get_all_schedules(ScheduleStatus.ACTIVE)
+
+    if not schedules:
+        console.print("[dim]No schedules found.[/dim]")
+        console.print("Add one with: trader schedule AAPL -n 'My Schedule' --at 09:35")
+        return
+
+    table = Table(title="Trading Schedules")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name")
+    table.add_column("Symbols")
+    table.add_column("Strategy")
+    table.add_column("Trigger")
+    table.add_column("Next Run")
+    table.add_column("Runs")
+    table.add_column("Status")
+
+    for s in schedules:
+        status_style = {
+            ScheduleStatus.ACTIVE: "green",
+            ScheduleStatus.PAUSED: "yellow",
+            ScheduleStatus.COMPLETED: "dim",
+            ScheduleStatus.ERROR: "red",
+        }.get(s.status, "")
+
+        symbols = ", ".join(s.config.symbols[:3])
+        if len(s.config.symbols) > 3:
+            symbols += f" +{len(s.config.symbols) - 3}"
+
+        next_run = s.next_run.strftime("%m/%d %H:%M") if s.next_run else "-"
+
+        table.add_row(
+            s.id,
+            s.name,
+            symbols,
+            s.config.strategy_name,
+            s.config.trigger_description,
+            next_run,
+            str(s.run_count),
+            f"[{status_style}]{s.status.value}[/{status_style}]",
+        )
+
+    console.print(table)
+
+
+@app.command("schedule-remove")
+def schedule_remove(
+    schedule_id: str = typer.Argument(..., help="Schedule ID to remove"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """
+    Remove a trading schedule.
+
+    Examples:
+
+        trader schedule-remove abc123
+        trader schedule-remove abc123 --force
+    """
+    from trader.scheduler import get_schedule_store
+
+    store = get_schedule_store()
+    schedule = store.get_schedule(schedule_id)
+
+    if not schedule:
+        console.print(f"[red]Schedule '{schedule_id}' not found[/red]")
+        raise typer.Exit(1)
+
+    if not force:
+        confirm = typer.confirm(
+            f"Remove schedule '{schedule.name}' ({schedule_id})?"
+        )
+        if not confirm:
+            console.print("[dim]Cancelled[/dim]")
+            return
+
+    from trader.scheduler import TradingScheduler
+
+    scheduler = TradingScheduler(store=store)
+    scheduler.remove_schedule(schedule_id)
+    console.print(f"[green]Schedule '{schedule.name}' removed[/green]")
+
+
+@app.command("schedule-pause")
+def schedule_pause(
+    schedule_id: str = typer.Argument(..., help="Schedule ID to pause"),
+) -> None:
+    """
+    Pause a trading schedule.
+
+    Examples:
+
+        trader schedule-pause abc123
+    """
+    from trader.scheduler import TradingScheduler, get_schedule_store
+
+    store = get_schedule_store()
+    scheduler = TradingScheduler(store=store)
+
+    if scheduler.pause_schedule(schedule_id):
+        console.print(f"[yellow]Schedule {schedule_id} paused[/yellow]")
+    else:
+        console.print(f"[red]Schedule '{schedule_id}' not found[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("schedule-resume")
+def schedule_resume(
+    schedule_id: str = typer.Argument(..., help="Schedule ID to resume"),
+) -> None:
+    """
+    Resume a paused trading schedule.
+
+    Examples:
+
+        trader schedule-resume abc123
+    """
+    from trader.scheduler import TradingScheduler, get_schedule_store
+
+    store = get_schedule_store()
+    scheduler = TradingScheduler(store=store)
+
+    if scheduler.resume_schedule(schedule_id):
+        console.print(f"[green]Schedule {schedule_id} resumed[/green]")
+    else:
+        console.print(f"[red]Schedule '{schedule_id}' not found or not paused[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("schedule-history")
+def schedule_history(
+    schedule_id: str = typer.Argument(..., help="Schedule ID to show history for"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Number of runs to show"),
+) -> None:
+    """
+    Show run history for a schedule.
+
+    Examples:
+
+        trader schedule-history abc123
+        trader schedule-history abc123 --limit 50
+    """
+    from trader.scheduler import get_schedule_store
+
+    store = get_schedule_store()
+    schedule = store.get_schedule(schedule_id)
+
+    if not schedule:
+        console.print(f"[red]Schedule '{schedule_id}' not found[/red]")
+        raise typer.Exit(1)
+
+    runs = store.get_run_history(schedule_id, limit)
+
+    console.print(f"\n[bold]Run History: {schedule.name}[/bold]")
+    console.print(f"Total runs: {schedule.run_count}, Errors: {schedule.error_count}")
+
+    if not runs:
+        console.print("[dim]No runs yet[/dim]")
+        return
+
+    table = Table()
+    table.add_column("Time")
+    table.add_column("Status")
+    table.add_column("Signals")
+    table.add_column("Trades")
+    table.add_column("Error")
+
+    for run in runs:
+        status_style = "green" if run["status"] == "success" else "red"
+        error_msg = run.get("error_message", "")[:40] if run.get("error_message") else ""
+
+        table.add_row(
+            run["started_at"][:16].replace("T", " "),
+            f"[{status_style}]{run['status']}[/{status_style}]",
+            str(run.get("signals_generated", 0)),
+            str(run.get("trades_executed", 0)),
+            error_msg,
+        )
+
+    console.print(table)
+
+
+@app.command("daemon")
+def run_daemon(
+    foreground: bool = typer.Option(
+        True, "--foreground/--background", "-f/-b",
+        help="Run in foreground (default) or background"
+    ),
+) -> None:
+    """
+    Start the trading scheduler daemon.
+
+    The daemon runs scheduled trading tasks automatically.
+    Press Ctrl+C to stop when running in foreground.
+
+    Examples:
+
+        trader daemon              # Run in foreground
+        trader daemon --background # Run in background (daemonize)
+    """
+    import signal
+
+    from trader.broker.paper import PaperBroker
+    from trader.data.fetcher import get_data_fetcher
+    from trader.risk.manager import RiskManager
+    from trader.scheduler import TradingScheduler, get_schedule_store
+
+    settings = get_settings()
+    store = get_schedule_store()
+
+    # Check for active schedules
+    from trader.scheduler import ScheduleStatus
+
+    active = store.get_all_schedules(ScheduleStatus.ACTIVE)
+    if not active:
+        console.print("[yellow]No active schedules found.[/yellow]")
+        console.print("Add schedules with: trader schedule AAPL -n 'My Schedule' --at 09:35")
+        return
+
+    console.print(f"\n[bold blue]Starting Trading Scheduler Daemon[/bold blue]")
+    console.print(f"Active schedules: {len(active)}")
+    for s in active[:5]:
+        next_run = s.next_run.strftime("%m/%d %H:%M") if s.next_run else "?"
+        console.print(f"  - {s.name}: next run at {next_run}")
+    if len(active) > 5:
+        console.print(f"  ... and {len(active) - 5} more")
+
+    if not foreground:
+        console.print("\n[yellow]Background mode not yet implemented. Running in foreground.[/yellow]")
+
+    # Setup components
+    data_fetcher = get_data_fetcher(settings)
+    broker = PaperBroker(initial_cash=100000.0)
+    risk_manager = RiskManager()
+
+    # Setup notifier if configured
+    notifier = None
+    if settings.discord_webhook_url:
+        from trader.notifications.discord import DiscordNotifier
+
+        notifier = DiscordNotifier(settings.discord_webhook_url)
+
+    scheduler = TradingScheduler(
+        store=store,
+        broker=broker,
+        data_fetcher=data_fetcher,
+        risk_manager=risk_manager,
+        notifier=notifier,
+    )
+
+    # Handle shutdown gracefully
+    def handle_signal(signum: int, frame: object) -> None:
+        console.print("\n[yellow]Shutting down...[/yellow]")
+        asyncio.get_event_loop().create_task(scheduler.stop())
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    console.print("\n[green]Daemon started. Press Ctrl+C to stop.[/green]")
+
+    # Run the daemon
+    asyncio.run(scheduler.run_daemon())
+
+    console.print("[dim]Daemon stopped.[/dim]")
+
+
 if __name__ == "__main__":
     app()
