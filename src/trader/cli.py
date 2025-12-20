@@ -4250,6 +4250,9 @@ def schedule_add(
     live: bool = typer.Option(
         False, "--live", help="Use live trading (default is paper)"
     ),
+    crypto: bool = typer.Option(
+        False, "--crypto", help="Cryptocurrency mode (24/7, no holidays)"
+    ),
 ) -> None:
     """
     Add a new trading schedule.
@@ -4264,6 +4267,7 @@ def schedule_add(
         trader schedule AAPL -n "Morning AAPL" --at "09:35"
         trader schedule mag7 -n "MAG7 Open" --trigger open --offset 5
         trader schedule NVDA,AMD -n "Chip scan" --cron "0 10 * * 1-5"
+        trader schedule BTC/USD -n "Bitcoin 24/7" --at "00:00" --crypto
     """
     from trader.scheduler import TradingScheduler, get_schedule_store
 
@@ -4286,6 +4290,7 @@ def schedule_add(
         offset_minutes=offset,
         run_once=once,
         paper_mode=not live,
+        crypto=crypto,
     )
 
     console.print(f"\n[green]Schedule added![/green]")
@@ -4293,8 +4298,11 @@ def schedule_add(
     console.print(f"  Name: {schedule.name}")
     console.print(f"  Symbols: {', '.join(schedule.config.symbols)}")
     console.print(f"  Strategy: {schedule.config.strategy_name}")
+    console.print(f"  Asset Type: {schedule.config.asset_type.upper()}")
     console.print(f"  Trigger: {schedule.config.trigger_description}")
     console.print(f"  Mode: {'Live' if not schedule.config.paper_mode else 'Paper'}")
+    if schedule.config.asset_type == "crypto":
+        console.print("  [dim]Note: Crypto schedules run 24/7, including weekends[/dim]")
     if schedule.next_run:
         console.print(f"  Next run: {schedule.next_run:%Y-%m-%d %H:%M}")
 

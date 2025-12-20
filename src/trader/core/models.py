@@ -58,6 +58,13 @@ class OrderStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class AssetType(str, Enum):
+    """Asset class type."""
+
+    STOCK = "stock"
+    CRYPTO = "crypto"
+
+
 @dataclass
 class Bar:
     """OHLCV bar data."""

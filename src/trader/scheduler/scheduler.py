@@ -59,12 +59,15 @@ class ScheduleConfig:
     strategy_name: str = "sma"
     action: str = "run"  # "run" (generate signals), "backtest", "scan"
 
+    # Asset type
+    asset_type: str = "stock"  # "stock" or "crypto"
+
     # Run options
     run_once: bool = False  # One-time schedule
     enabled_days: list[int] = field(
         default_factory=lambda: [0, 1, 2, 3, 4]
-    )  # Mon-Fri (0=Monday)
-    skip_holidays: bool = True
+    )  # Mon-Fri (0=Monday) for stocks, 0-6 for crypto
+    skip_holidays: bool = True  # Only applies to stocks
     paper_mode: bool = True  # Use paper trading
 
     # Execution settings
@@ -112,6 +115,7 @@ class Schedule:
             "symbols": ",".join(self.config.symbols),
             "strategy_name": self.config.strategy_name,
             "action": self.config.action,
+            "asset_type": self.config.asset_type,
             "cron_expression": self.config.cron_expression,
             "time_of_day": (
                 self.config.time_of_day.isoformat() if self.config.time_of_day else None
@@ -139,6 +143,7 @@ class Schedule:
             symbols=data["symbols"].split(",") if data["symbols"] else [],
             strategy_name=data["strategy_name"],
             action=data["action"],
+            asset_type=data.get("asset_type", "stock"),
             cron_expression=data.get("cron_expression"),
             time_of_day=(
                 time.fromisoformat(data["time_of_day"]) if data.get("time_of_day") else None
@@ -297,6 +302,7 @@ class ScheduleStore:
                     symbols TEXT NOT NULL,
                     strategy_name TEXT NOT NULL,
                     action TEXT NOT NULL DEFAULT 'run',
+                    asset_type TEXT NOT NULL DEFAULT 'stock',
                     cron_expression TEXT,
                     time_of_day TEXT,
                     market_trigger TEXT,
@@ -313,6 +319,14 @@ class ScheduleStore:
                     last_error TEXT
                 )
             """)
+
+            # Migrate existing databases: add asset_type column if missing
+            try:
+                cursor.execute("ALTER TABLE schedules ADD COLUMN asset_type TEXT NOT NULL DEFAULT 'stock'")
+                conn.commit()
+            except Exception:
+                # Column already exists or other error, ignore
+                pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS schedule_runs (
@@ -344,13 +358,13 @@ class ScheduleStore:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO schedules (
-                    id, name, symbols, strategy_name, action,
+                    id, name, symbols, strategy_name, action, asset_type,
                     cron_expression, time_of_day, market_trigger,
                     trigger_offset_minutes, run_once, enabled_days,
                     paper_mode, status, created_at, last_run, next_run,
                     run_count, error_count, last_error
                 ) VALUES (
-                    :id, :name, :symbols, :strategy_name, :action,
+                    :id, :name, :symbols, :strategy_name, :action, :asset_type,
                     :cron_expression, :time_of_day, :market_trigger,
                     :trigger_offset_minutes, :run_once, :enabled_days,
                     :paper_mode, :status, :created_at, :last_run, :next_run,
@@ -541,6 +555,8 @@ class TradingScheduler:
         if config.run_once and schedule.run_count > 0:
             return None  # One-time schedule already ran
 
+        is_crypto = config.asset_type == "crypto"
+
         # Find next valid date
         check_date = now
         for _ in range(366):  # Check up to a year
@@ -551,8 +567,8 @@ class TradingScheduler:
                 )
                 continue
 
-            # Skip holidays if configured
-            if config.skip_holidays and self.is_holiday(check_date):
+            # Skip holidays if configured (stocks only)
+            if not is_crypto and config.skip_holidays and self.is_holiday(check_date):
                 check_date = (check_date + timedelta(days=1)).replace(
                     hour=0, minute=0, second=0, microsecond=0
                 )
@@ -564,9 +580,9 @@ class TradingScheduler:
                     next_run = CronParser.get_next_run(
                         config.cron_expression, after=now, tz=self.tz
                     )
-                    # Verify it's a valid trading day
+                    # Verify it's a valid trading day (stocks only)
                     if next_run.weekday() in config.enabled_days:
-                        if not config.skip_holidays or not self.is_holiday(next_run):
+                        if is_crypto or not config.skip_holidays or not self.is_holiday(next_run):
                             return next_run
                 except ValueError:
                     pass
@@ -605,6 +621,7 @@ class TradingScheduler:
         offset_minutes: int = 0,
         run_once: bool = False,
         paper_mode: bool = True,
+        crypto: bool = False,
     ) -> Schedule:
         """Add a new schedule."""
         import uuid
@@ -635,14 +652,20 @@ class TradingScheduler:
                 }
                 parsed_trigger = aliases.get(market_trigger.lower())
 
+        # Crypto schedules run 24/7 by default
+        enabled_days = [0, 1, 2, 3, 4, 5, 6] if crypto else [0, 1, 2, 3, 4]
+
         config = ScheduleConfig(
             symbols=symbols,
             strategy_name=strategy_name,
+            asset_type="crypto" if crypto else "stock",
             cron_expression=cron,
             time_of_day=parsed_time,
             market_trigger=parsed_trigger,
             trigger_offset_minutes=offset_minutes,
             run_once=run_once,
+            enabled_days=enabled_days,
+            skip_holidays=not crypto,  # Crypto doesn't observe holidays
             paper_mode=paper_mode,
         )
 

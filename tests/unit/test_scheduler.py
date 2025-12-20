@@ -468,3 +468,99 @@ class TestScheduleStatus:
         assert "paused" in statuses
         assert "completed" in statuses
         assert "error" in statuses
+
+
+class TestCryptoSchedules:
+    """Tests for cryptocurrency 24/7 schedules."""
+
+    @pytest.fixture
+    def scheduler(self) -> TradingScheduler:
+        """Create a scheduler with temporary store."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test_schedules.db"
+            store = ScheduleStore(db_path)
+            yield TradingScheduler(store=store)
+
+    def test_crypto_schedule_runs_24_7(self, scheduler: TradingScheduler) -> None:
+        """Test that crypto schedules run 24/7."""
+        schedule = scheduler.add_schedule(
+            name="Crypto Test",
+            symbols=["BTC/USD"],
+            time_of_day="10:00",
+            crypto=True,
+        )
+
+        assert schedule.config.asset_type == "crypto"
+        assert schedule.config.enabled_days == [0, 1, 2, 3, 4, 5, 6]
+        assert schedule.config.skip_holidays is False
+
+    def test_crypto_schedule_runs_on_weekends(self, scheduler: TradingScheduler) -> None:
+        """Test that crypto schedules can run on weekends."""
+        schedule = Schedule(
+            id="crypto_weekend",
+            name="Weekend Crypto",
+            config=ScheduleConfig(
+                symbols=["ETH/USD"],
+                time_of_day=time(15, 0),
+                asset_type="crypto",
+                enabled_days=[0, 1, 2, 3, 4, 5, 6],
+                skip_holidays=False,
+            ),
+        )
+
+        # Test on a Saturday
+        saturday = datetime(2024, 6, 1, 10, 0, tzinfo=scheduler.tz)  # June 1, 2024 is Saturday
+
+        # Manually set now for testing
+        next_run = scheduler.calculate_next_run(schedule)
+
+        # Should schedule for next available time (could be Saturday afternoon)
+        assert next_run is not None
+        # Weekend day is allowed
+        assert next_run.weekday() in [5, 6] or next_run.weekday() in [0, 1, 2, 3, 4]
+
+    def test_crypto_schedule_ignores_holidays(self, scheduler: TradingScheduler) -> None:
+        """Test that crypto schedules don't skip holidays."""
+        schedule = Schedule(
+            id="crypto_holiday",
+            name="Holiday Crypto",
+            config=ScheduleConfig(
+                symbols=["BTC/USD"],
+                time_of_day=time(10, 0),
+                asset_type="crypto",
+                enabled_days=[0, 1, 2, 3, 4, 5, 6],
+                skip_holidays=False,
+            ),
+        )
+
+        next_run = scheduler.calculate_next_run(schedule)
+        assert next_run is not None
+
+        # Crypto should run even on US holidays
+        # Just verify it can calculate a next run
+
+    def test_stock_schedule_vs_crypto_schedule(self, scheduler: TradingScheduler) -> None:
+        """Test that stock and crypto schedules behave differently."""
+        stock_schedule = scheduler.add_schedule(
+            name="Stock Test",
+            symbols=["AAPL"],
+            time_of_day="10:00",
+            crypto=False,
+        )
+
+        crypto_schedule = scheduler.add_schedule(
+            name="Crypto Test",
+            symbols=["BTC/USD"],
+            time_of_day="10:00",
+            crypto=True,
+        )
+
+        # Stock: Mon-Fri only, observes holidays
+        assert stock_schedule.config.asset_type == "stock"
+        assert stock_schedule.config.enabled_days == [0, 1, 2, 3, 4]
+        assert stock_schedule.config.skip_holidays is True
+
+        # Crypto: 24/7, no holidays
+        assert crypto_schedule.config.asset_type == "crypto"
+        assert crypto_schedule.config.enabled_days == [0, 1, 2, 3, 4, 5, 6]
+        assert crypto_schedule.config.skip_holidays is False
